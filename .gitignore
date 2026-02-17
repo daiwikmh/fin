@@ -1,69 +1,67 @@
-# Dependencies
-/node_modules
-/.pnp
-.pnp.js
+# =========================
+# Root ignores
+# =========================
 
-# Next.js build output
-/.next/
-/out/
-
-# Production
-/build
+# Node modules (anywhere)
+node_modules/
 
 # Logs
-npm-debug.log*
-yarn-debug.log*
-yarn-error.log*
-pnpm-debug.log*
-
-# Runtime data
-*.pid
-*.seed
-*.pid.lock
-
-# Environment variables
-.env
-.env.local
-.env.development.local
-.env.test.local
-.env.production.local
-
-# Vercel
-.vercel
-
-# TypeScript
-*.tsbuildinfo
-next-env.d.ts
+*.log
 
 # OS files
 .DS_Store
 Thumbs.db
 
-# IDE files
+# IDE
 .vscode/
 .idea/
 *.swp
 
+# =========================
+# Next.js app inside /fin
+# =========================
+
+# Build output
+fin/.next/
+fin/out/
+
+# Production build
+fin/build/
+
+# Env files
+fin/.env
+fin/.env.local
+fin/.env.development.local
+fin/.env.test.local
+fin/.env.production.local
+
+# Vercel
+fin/.vercel
+
+# TypeScript
+fin/*.tsbuildinfo
+fin/next-env.d.ts
+
 # Coverage
-/coverage
+fin/coverage/
 
 # Cache
-.cache/
-*.cache
+fin/.cache/
+fin/*.cache
 
-# Turborepo
-.turbo
+# Turborepo (if used)
+fin/.turbo
 
-# ESLint cache
-.eslintcache
+# ESLint
+fin/.eslintcache
 
 # Storybook
-/storybook-static
+fin/storybook-static/
 
-# Lock files (optional — comment out if you want to commit them)
-# package-lock.json
-# yarn.lock
-# pnpm-lock.yaml
+# =========================
+# Optional (uncomment if needed)
+# =========================
 
-# Misc
-*.log
+# fin/package-lock.json
+# fin/yarn.lock
+# fin/pnpm-lock.yaml
