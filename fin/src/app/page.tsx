@@ -23,13 +23,14 @@ export default function Home() {
       <Header />
 
       {/* Main Layout */}
-      <div className="flex h-[calc(100vh-73px)]">
+      <div className="flex h-[calc(100vh-73px)] gap-2 px-2 py-2">
         {/* Left Sidebar - Market List */}
         <LeftSidebar
           isVisible={showLeftSidebar}
           onToggle={() => setShowLeftSidebar(!showLeftSidebar)}
           selectedPair={sdex.selectedPair}
           onSelectPair={sdex.selectPair}
+          network={sdex.network}
         />
 
         {/* Main Content Area */}

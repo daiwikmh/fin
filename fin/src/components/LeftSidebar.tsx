@@ -2,19 +2,21 @@
 
 import { useState } from 'react';
 import { Search, ChevronLeft, ChevronRight } from 'lucide-react';
-import { tradingPairs } from '@/configs/tradingPairs';
+import { getTradingPairs } from '@/configs/tradingPairs';
 
 interface LeftSidebarProps {
   isVisible: boolean;
   onToggle: () => void;
   selectedPair: string;
   onSelectPair: (symbol: string) => void;
+  network: string;
 }
 
-export default function LeftSidebar({ isVisible, onToggle, selectedPair, onSelectPair }: LeftSidebarProps) {
+export default function LeftSidebar({ isVisible, onToggle, selectedPair, onSelectPair, network }: LeftSidebarProps) {
   const [searchTerm, setSearchTerm] = useState('');
 
-  const filteredPairs = tradingPairs.filter((pair) =>
+  const pairs = getTradingPairs();
+  const filteredPairs = pairs.filter((pair) =>
     pair.symbol.toLowerCase().includes(searchTerm.toLowerCase())
   );
 

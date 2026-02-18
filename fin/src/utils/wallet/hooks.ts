@@ -5,7 +5,7 @@ import { KitEventType } from "@creit-tech/stellar-wallets-kit/types";
 export function useWallet() {
   const [address, setAddress] = useState<string | null>(null);
   const [isConnecting, setIsConnecting] = useState(false);
-  const [network, setNetwork] = useState<NetworkType>('MAINNET');
+  const [network, setNetwork] = useState<NetworkType>('TESTNET');
 
   useEffect(() => {
     // Set initial network

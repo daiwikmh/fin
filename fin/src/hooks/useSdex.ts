@@ -3,6 +3,7 @@
 import { useState, useEffect, useCallback, useRef } from 'react';
 import { useWallet } from '@/utils/wallet';
 import { getAssetPair, setCurrentNetwork } from '@/configs/assets';
+import { getTradingPairs } from '@/configs/tradingPairs';
 import type { OrderBook, OpenOffer, Trade, TransactionResult, StellarAsset } from '@/types/sdex.types';
 import { getOrderBook } from '@/actions/orderbook';
 import { getOpenOffers, getTradeHistory } from '@/actions/account';
@@ -26,6 +27,7 @@ interface UseSdexReturn {
   refreshOrderBook: () => Promise<void>;
   refreshOffers: () => Promise<void>;
   clearResult: () => void;
+  network: string;
 }
 
 export function useSdex(): UseSdexReturn {
@@ -46,7 +48,13 @@ export function useSdex(): UseSdexReturn {
 
   useEffect(() => {
     setCurrentNetwork(network);
-  }, [network]);
+    // Auto-reset pair if it doesn't exist on the new network
+    const pairs = getTradingPairs();
+    if (!pairs.some((p) => p.symbol === selectedPair)) {
+      setSelectedPair(pairs[0]?.symbol ?? 'XLM/USDC');
+      setOrderBook(null);
+    }
+  }, [network]); // eslint-disable-line react-hooks/exhaustive-deps
 
   useEffect(() => {
     const pair = getAssetPair(selectedPair);
@@ -216,5 +224,6 @@ export function useSdex(): UseSdexReturn {
     selectPair, selectedPair, baseAsset, quoteAsset,
     placeOrder, submitMarketOrder, cancelOrder,
     refreshOrderBook, refreshOffers, clearResult,
+    network,
   };
 }

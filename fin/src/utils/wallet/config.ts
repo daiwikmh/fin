@@ -11,10 +11,10 @@ export const STELLAR_NETWORKS = {
 
 export type NetworkType = 'MAINNET' | 'TESTNET';
 
-// Get stored network or default to mainnet
+// Get stored network or default to testnet
 function getStoredNetwork(): NetworkType {
-  if (typeof window === 'undefined') return 'MAINNET';
-  return (localStorage.getItem('stellar_network') as NetworkType) || 'MAINNET';
+  if (typeof window === 'undefined') return 'TESTNET';
+  return (localStorage.getItem('stellar_network') as NetworkType) || 'TESTNET';
 }
 
 // Store network preference
@@ -24,7 +24,7 @@ export function setStoredNetwork(network: NetworkType) {
 }
 
 // Wallet kit configuration
-export function getWalletKitConfig(network: NetworkType = 'MAINNET') {
+export function getWalletKitConfig(network: NetworkType = 'TESTNET') {
   return {
     modules: defaultModules(),
     network: STELLAR_NETWORKS[network],
@@ -38,7 +38,7 @@ export function getWalletKitConfig(network: NetworkType = 'MAINNET') {
 
 // Initialize the wallet kit
 let isInitialized = false;
-let currentNetwork: NetworkType = 'MAINNET';
+let currentNetwork: NetworkType = 'TESTNET';
 
 export function initWalletKit(network?: NetworkType) {
   // Only initialize in browser environment (not during SSR)

@@ -21,8 +21,13 @@ export const NETWORKS: Record<NetworkId, NetworkConfig> = {
   },
 };
 
-// Default to testnet during development
+// Read network from localStorage (same key as wallet config), fallback to TESTNET
 let currentNetwork: NetworkId = 'TESTNET';
+
+function readStoredNetwork(): NetworkId {
+  if (typeof window === 'undefined') return 'TESTNET';
+  return (localStorage.getItem('stellar_network') as NetworkId) || 'TESTNET';
+}
 
 export function setCurrentNetwork(network: NetworkId) {
   currentNetwork = network;
@@ -34,6 +39,11 @@ export function getNetwork(): NetworkConfig {
 
 export function getCurrentNetworkId(): NetworkId {
   return currentNetwork;
+}
+
+// Sync from localStorage on module load (client-side only)
+if (typeof window !== 'undefined') {
+  currentNetwork = readStoredNetwork();
 }
 
 // ── Asset definitions per network ──────────────────────────────────────
