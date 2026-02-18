@@ -7,11 +7,12 @@ import { tradingPairs } from '@/configs/tradingPairs';
 interface LeftSidebarProps {
   isVisible: boolean;
   onToggle: () => void;
+  selectedPair: string;
+  onSelectPair: (symbol: string) => void;
 }
 
-export default function LeftSidebar({ isVisible, onToggle }: LeftSidebarProps) {
+export default function LeftSidebar({ isVisible, onToggle, selectedPair, onSelectPair }: LeftSidebarProps) {
   const [searchTerm, setSearchTerm] = useState('');
-  const [selectedPair, setSelectedPair] = useState('WETH/USDC');
 
   const filteredPairs = tradingPairs.filter((pair) =>
     pair.symbol.toLowerCase().includes(searchTerm.toLowerCase())
@@ -38,7 +39,7 @@ export default function LeftSidebar({ isVisible, onToggle }: LeftSidebarProps) {
           {filteredPairs.map((pair) => (
             <button
               key={pair.symbol}
-              onClick={() => setSelectedPair(pair.symbol)}
+              onClick={() => onSelectPair(pair.symbol)}
               className={`trading-pair-item ${selectedPair === pair.symbol ? 'active' : ''}`}
             >
               <div className="trading-pair-info">
@@ -49,17 +50,15 @@ export default function LeftSidebar({ isVisible, onToggle }: LeftSidebarProps) {
                 </div>
                 <div className="trading-pair-details">
                   <div className="trading-pair-symbol">{pair.symbol}</div>
-                  <div className="trading-pair-volume">{pair.volume24h.toLocaleString()}</div>
+                  <div className="trading-pair-volume">SDEX</div>
                 </div>
               </div>
 
               <div className="trading-pair-price-info">
                 <div className="trading-pair-price">
-                  ${pair.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 2 })}
-                </div>
-                <div className={`trading-pair-change ${pair.change24h >= 0 ? 'positive' : 'negative'}`}>
-                  {pair.change24h >= 0 ? '+' : ''}
-                  {pair.change24h.toFixed(2)}%
+                  {pair.price > 0
+                    ? pair.price.toLocaleString(undefined, { minimumFractionDigits: 2, maximumFractionDigits: 7 })
+                    : '--'}
                 </div>
               </div>
             </button>

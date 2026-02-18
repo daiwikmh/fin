@@ -1,151 +1,50 @@
 'use client';
 
-import { useEffect, useRef } from 'react';
+import { useEffect, useRef, memo } from 'react';
+import {
+  TRADINGVIEW_SCRIPT_URL,
+  defaultTradingViewConfig,
+  getTradingViewSymbol,
+} from '@/utils/tradingview';
 
-export default function ChartSection() {
-  const chartContainerRef = useRef<HTMLDivElement>(null);
+interface ChartSectionProps {
+  pair?: string;
+}
+
+function ChartSection({ pair = 'XLM/USDC' }: ChartSectionProps) {
+  const container = useRef<HTMLDivElement>(null);
 
   useEffect(() => {
-    if (!chartContainerRef.current) return;
+    if (!container.current) return;
 
-    let chart: any = null;
+    // Clear previous widget
+    container.current.innerHTML = '';
 
-    const initChart = async () => {
-      const { createChart } = await import('lightweight-charts');
+    // Re-create the inner widget div
+    const widgetDiv = document.createElement('div');
+    widgetDiv.className = 'tradingview-widget-container__widget';
+    widgetDiv.style.height = 'calc(100% - 32px)';
+    widgetDiv.style.width = '100%';
+    container.current.appendChild(widgetDiv);
 
-      chart = createChart(chartContainerRef.current!, {
-        layout: {
-          background: { color: '#060606' },
-          textColor: '#a0a0a0',
-        },
-        grid: {
-          vertLines: { color: '#1a1a1a' },
-          horzLines: { color: '#1a1a1a' },
-        },
-        width: chartContainerRef.current!.clientWidth,
-        height: 500,
-        timeScale: {
-          borderColor: '#1a1a1a',
-          timeVisible: true,
-        },
-        rightPriceScale: {
-          borderColor: '#1a1a1a',
-        },
-        crosshair: {
-          vertLine: {
-            color: '#2a2a2a',
-            labelBackgroundColor: '#00ff94',
-          },
-          horzLine: {
-            color: '#2a2a2a',
-            labelBackgroundColor: '#00ff94',
-          },
-        },
-      });
-
-      const candlestickSeries = chart.addCandlestickSeries({
-        upColor: '#00ff94',
-        downColor: '#ff4d4d',
-        borderUpColor: '#00ff94',
-        borderDownColor: '#ff4d4d',
-        wickUpColor: '#00ff94',
-        wickDownColor: '#ff4d4d',
-      });
-
-      const data = generateSampleData();
-      candlestickSeries.setData(data);
-      chart.timeScale().fitContent();
-
-      const handleResize = () => {
-        if (chartContainerRef.current && chart) {
-          chart.applyOptions({
-            width: chartContainerRef.current.clientWidth,
-          });
-        }
-      };
-
-      window.addEventListener('resize', handleResize);
-
-      return () => {
-        window.removeEventListener('resize', handleResize);
-      };
-    };
-
-    initChart();
-
-    return () => {
-      if (chart) {
-        chart.remove();
-      }
-    };
-  }, []);
+    const script = document.createElement('script');
+    script.src = TRADINGVIEW_SCRIPT_URL;
+    script.type = 'text/javascript';
+    script.async = true;
+    script.innerHTML = JSON.stringify({
+      ...defaultTradingViewConfig,
+      symbol: getTradingViewSymbol(pair),
+    });
+    container.current.appendChild(script);
+  }, [pair]);
 
   return (
-    <div className="chart-section">
-      {/* Chart Header */}
-      <div className="chart-header">
-        <div className="chart-info">
-          <div className="chart-pair-info">
-            <h3>WETH/USDC</h3>
-            <div className="chart-price">$1,968.18</div>
-          </div>
-          <div className="chart-stats">
-            <div className="chart-stat-item">
-              <div className="chart-stat-label">24h Change</div>
-              <div className="chart-stat-value negative">-$46.89 (-2.34%)</div>
-            </div>
-            <div className="chart-stat-item">
-              <div className="chart-stat-label">24h High</div>
-              <div className="chart-stat-value">$2,015.07</div>
-            </div>
-            <div className="chart-stat-item">
-              <div className="chart-stat-label">24h Low</div>
-              <div className="chart-stat-value">$1,954.21</div>
-            </div>
-            <div className="chart-stat-item">
-              <div className="chart-stat-label">24h Volume</div>
-              <div className="chart-stat-value">32.14M</div>
-            </div>
-          </div>
-        </div>
-        <div className="chart-timeframe-selector">
-          <button className="timeframe-btn">1m</button>
-          <button className="timeframe-btn">5m</button>
-          <button className="timeframe-btn active">15m</button>
-          <button className="timeframe-btn">1h</button>
-          <button className="timeframe-btn">4h</button>
-          <button className="timeframe-btn">1D</button>
-        </div>
-      </div>
-
-      {/* Chart */}
-      <div ref={chartContainerRef} className="w-full" />
-    </div>
+    <div
+      className="tradingview-widget-container"
+      ref={container}
+      style={{ height: '450px', width: '100%' }}
+    />
   );
 }
 
-function generateSampleData() {
-  const data = [];
-  const basePrice = 1968;
-  const now = Math.floor(Date.now() / 1000);
-  const interval = 900; // 15 minutes
-
-  for (let i = 200; i >= 0; i--) {
-    const time = now - i * interval;
-    const volatility = Math.random() * 20 - 10;
-    const open = basePrice + volatility;
-    const close = open + (Math.random() * 30 - 15);
-    const high = Math.max(open, close) + Math.random() * 10;
-    const low = Math.min(open, close) - Math.random() * 10;
-
-    data.push({
-      time,
-      open,
-      high,
-      low,
-      close,
-    });
-  }
-
-  return data;
-}
+export default memo(ChartSection);
