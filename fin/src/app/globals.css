@@ -1148,3 +1148,36 @@ input[type="number"] {
   color: #d0d0d0;
   word-break: break-word;
 }
+
+/* Agent config snippet */
+.agent-config-snippet {
+  background-color: #0a0a0a;
+  border: 1px solid #1a1a1a;
+  border-radius: 0.75rem;
+  overflow: hidden;
+}
+
+.agent-config-header {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  padding: 0.5rem 0.75rem;
+  border-bottom: 1px solid #1a1a1a;
+}
+
+.agent-config-label {
+  font-size: 0.75rem;
+  font-weight: 500;
+  color: #6a6a6a;
+}
+
+.agent-config-code {
+  padding: 0.625rem 0.75rem;
+  font-family: "SF Mono", "Fira Code", "Fira Mono", monospace;
+  font-size: 0.6875rem;
+  line-height: 1.5;
+  color: #a0a0a0;
+  white-space: pre;
+  overflow-x: auto;
+  margin: 0;
+}

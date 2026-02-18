@@ -70,11 +70,28 @@ export default function RightSidebar({ isVisible, onToggle }: RightSidebarProps)
     }
   }, []);
 
+  const getConfigJson = useCallback(() => {
+    return JSON.stringify({
+      token,
+      bridge_url: BRIDGE_URL,
+      skills_endpoint: `${BRIDGE_URL}/api/skills?token=${token}`,
+      execute_endpoint: `${BRIDGE_URL}/api/bridge`,
+      auth_header: 'X-Agent-Token',
+    }, null, 2);
+  }, [token]);
+
   const handleCopy = useCallback(() => {
     navigator.clipboard.writeText(token);
     setCopied(true);
     setTimeout(() => setCopied(false), 2000);
   }, [token]);
+
+  const [configCopied, setConfigCopied] = useState(false);
+  const handleCopyConfig = useCallback(() => {
+    navigator.clipboard.writeText(getConfigJson());
+    setConfigCopied(true);
+    setTimeout(() => setConfigCopied(false), 2000);
+  }, [getConfigJson]);
 
   const formatTime = (ts: string) => {
     try {
@@ -150,6 +167,16 @@ export default function RightSidebar({ isVisible, onToggle }: RightSidebarProps)
                 </button>
               </div>
               <span className="agent-token-hint">Send this token to your Telegram bot</span>
+            </div>
+
+            <div className="agent-config-snippet">
+              <div className="agent-config-header">
+                <span className="agent-config-label">Agent Config</span>
+                <button className="agent-token-copy-btn" onClick={handleCopyConfig}>
+                  {configCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                </button>
+              </div>
+              <pre className="agent-config-code">{getConfigJson()}</pre>
             </div>
 
             <div className="agent-terminal">
