@@ -45,6 +45,8 @@ fin/next-env.d.ts
 # Coverage
 fin/coverage/
 
+local.context
+
 # Cache
 fin/.cache/
 fin/*.cache
