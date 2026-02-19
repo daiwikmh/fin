@@ -35,6 +35,7 @@ func (h *SkillsHandler) List(w http.ResponseWriter, r *http.Request) {
 	}
 
 	skills := []Skill{
+		// ── Read skills ──
 		{
 			Name:        "orderbook",
 			Description: "Get live SDEX order book for a trading pair",
@@ -75,6 +76,42 @@ func (h *SkillsHandler) List(w http.ResponseWriter, r *http.Request) {
 			Method:      "GET",
 			Path:        "/api/bridge/price",
 			Params:      map[string]string{"symbol": "Trading pair symbol, e.g. XLM/USDC"},
+		},
+		// ── Write skills (return unsigned XDR for agent to sign) ──
+		{
+			Name:        "limit_order",
+			Description: "Build an unsigned limit order transaction (ManageSellOffer). Returns XDR for signing.",
+			Method:      "POST",
+			Path:        "/api/bridge/order/limit",
+			Params:      map[string]string{"account": "Stellar account ID (G...)", "symbol": "Trading pair, e.g. XLM/USDC", "side": "buy or sell", "amount": "Amount to trade", "price": "Limit price"},
+		},
+		{
+			Name:        "market_order",
+			Description: "Build an unsigned market order transaction (PathPaymentStrictSend). Returns XDR for signing.",
+			Method:      "POST",
+			Path:        "/api/bridge/order/market",
+			Params:      map[string]string{"account": "Stellar account ID (G...)", "symbol": "Trading pair, e.g. XLM/USDC", "side": "buy or sell", "amount": "Amount to trade", "slippage": "Slippage tolerance % (default 0.5)"},
+		},
+		{
+			Name:        "cancel_order",
+			Description: "Build an unsigned cancel-offer transaction. Returns XDR for signing.",
+			Method:      "POST",
+			Path:        "/api/bridge/order/cancel",
+			Params:      map[string]string{"account": "Stellar account ID (G...)", "offerId": "Offer ID to cancel", "symbol": "Trading pair of the offer, e.g. XLM/USDC"},
+		},
+		{
+			Name:        "build_trustline",
+			Description: "Build an unsigned ChangeTrust transaction for an asset. Returns XDR for signing.",
+			Method:      "POST",
+			Path:        "/api/bridge/trustline/build",
+			Params:      map[string]string{"account": "Stellar account ID (G...)", "asset": "Asset code, e.g. USDC"},
+		},
+		{
+			Name:        "submit_tx",
+			Description: "Submit a signed transaction XDR to the Stellar network.",
+			Method:      "POST",
+			Path:        "/api/bridge/tx/submit",
+			Params:      map[string]string{"signedXdr": "Signed transaction XDR string"},
 		},
 	}
 

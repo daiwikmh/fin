@@ -70,14 +70,35 @@ export default function RightSidebar({ isVisible, onToggle }: RightSidebarProps)
     }
   }, []);
 
-  const getConfigJson = useCallback(() => {
-    return JSON.stringify({
-      token,
-      bridge_url: BRIDGE_URL,
-      skills_endpoint: `${BRIDGE_URL}/api/skills?token=${token}`,
-      execute_endpoint: `${BRIDGE_URL}/api/bridge`,
-      auth_header: 'X-Agent-Token',
-    }, null, 2);
+  const getAgentPrompt = useCallback(() => {
+    return `You are now connected to a Stellar DEX trading platform. Use these HTTP API endpoints to trade on the user's behalf.
+
+**Authentication:** Include header \`X-Agent-Token: ${token}\` on every request.
+**Base URL:** ${BRIDGE_URL}
+
+**Step 1 — Discover available skills:**
+GET ${BRIDGE_URL}/api/skills?token=${token}
+
+**Step 2 — Use skills by calling the returned paths.**
+
+READ endpoints (GET, pass params as query string):
+- /api/bridge/pairs — list trading pairs
+- /api/bridge/orderbook?symbol=XLM/USDC — live order book
+- /api/bridge/price?symbol=XLM/USDC — mid-price
+- /api/bridge/offers?account=G... — open offers
+- /api/bridge/trades?account=G...&limit=20 — trade history
+- /api/bridge/trustline?account=G...&asset=USDC — trustline check
+
+WRITE endpoints (POST, JSON body, return unsigned XDR):
+- /api/bridge/order/limit — body: { account, symbol, side, amount, price }
+- /api/bridge/order/market — body: { account, symbol, side, amount, slippage? }
+- /api/bridge/order/cancel — body: { account, offerId, symbol }
+- /api/bridge/trustline/build — body: { account, asset }
+- /api/bridge/tx/submit — body: { signedXdr } (submit signed transaction)
+
+**Write flow:** call build endpoint → get { xdr, networkPassphrase } → sign XDR → POST to /api/bridge/tx/submit with { signedXdr }.
+
+Start by calling GET ${BRIDGE_URL}/api/bridge/pairs to see what's available, then confirm you're connected.`;
   }, [token]);
 
   const handleCopy = useCallback(() => {
@@ -88,10 +109,10 @@ export default function RightSidebar({ isVisible, onToggle }: RightSidebarProps)
 
   const [configCopied, setConfigCopied] = useState(false);
   const handleCopyConfig = useCallback(() => {
-    navigator.clipboard.writeText(getConfigJson());
+    navigator.clipboard.writeText(getAgentPrompt());
     setConfigCopied(true);
     setTimeout(() => setConfigCopied(false), 2000);
-  }, [getConfigJson]);
+  }, [getAgentPrompt]);
 
   const formatTime = (ts: string) => {
     try {
@@ -166,17 +187,17 @@ export default function RightSidebar({ isVisible, onToggle }: RightSidebarProps)
                   {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
               </div>
-              <span className="agent-token-hint">Send this token to your Telegram bot</span>
+              <span className="agent-token-hint">Copy the prompt below and paste it to your OpenClaw bot</span>
             </div>
 
             <div className="agent-config-snippet">
               <div className="agent-config-header">
-                <span className="agent-config-label">Agent Config</span>
+                <span className="agent-config-label">Send to OpenClaw</span>
                 <button className="agent-token-copy-btn" onClick={handleCopyConfig}>
                   {configCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
                 </button>
               </div>
-              <pre className="agent-config-code">{getConfigJson()}</pre>
+              <pre className="agent-config-code">{getAgentPrompt()}</pre>
             </div>
 
             <div className="agent-terminal">

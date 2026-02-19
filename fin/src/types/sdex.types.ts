@@ -53,3 +53,10 @@ export interface MarketOrderResult {
   xdr: string;
   quotedDestAmount: string;
 }
+
+export type SignFn = (xdr: string, networkPassphrase: string) => Promise<string>;
+
+export interface UnsignedTx {
+  xdr: string;
+  networkPassphrase: string;
+}
