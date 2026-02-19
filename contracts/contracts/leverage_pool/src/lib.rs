@@ -282,7 +282,8 @@ impl LeveragePool {
         extend_instance(&env);
     }
 
-    pub fn add_collateral_type(
+    /// Add or update a collateral type configuration.
+    pub fn set_collateral_type(
         env: Env,
         caller: Address,
         token: Address,
@@ -302,30 +303,7 @@ impl LeveragePool {
         extend_persistent(&env, &key);
 
         env.events()
-            .publish((symbol_short!("coll"), symbol_short!("added")), token);
-    }
-
-    pub fn update_collateral_config(
-        env: Env,
-        caller: Address,
-        token: Address,
-        config: CollateralConfig,
-    ) {
-        extend_instance(&env);
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| panic!("NotInitialized"));
-        admin.require_auth();
-        assert_eq!(caller, admin);
-
-        let key = DataKey::CollateralConfig(token.clone());
-        env.storage().persistent().set(&key, &config);
-        extend_persistent(&env, &key);
-
-        env.events()
-            .publish((symbol_short!("coll"), symbol_short!("updated")), token);
+            .publish((symbol_short!("coll"), symbol_short!("set")), token);
     }
 
     // ----- LP functions -----
@@ -698,40 +676,11 @@ impl LeveragePool {
             accrue_interest_internal(&mut position, borrow_rate, env.ledger().sequence());
 
         if interest > 0 {
-            // Update total borrowed to include new interest
             let total_borrowed = get_i128(&env, &DataKey::TotalBorrowed);
             set_i128(&env, &DataKey::TotalBorrowed, total_borrowed + interest);
 
             env.storage().persistent().set(&pos_key, &position);
             extend_persistent(&env, &pos_key);
-
-            // Check if position is at risk (within 10% of liquidation threshold)
-            let config = load_collateral_config(&env, &position.collateral_token);
-            let oracle_address: Address = env
-                .storage()
-                .instance()
-                .get(&DataKey::OracleContract)
-                .unwrap();
-            let price = get_oracle_price(&env, &oracle_address, &config.price_feed_key);
-            let health = compute_health(
-                position.collateral_amount,
-                price,
-                config.collateral_factor_bps,
-                position.borrowed_amount,
-            );
-            let min_health: u32 = env
-                .storage()
-                .instance()
-                .get(&DataKey::MinHealthBps)
-                .unwrap();
-            let risk_threshold = (min_health as i128) * 110 / 100;
-
-            if health < risk_threshold {
-                env.events().publish(
-                    (symbol_short!("pos"), symbol_short!("at_risk")),
-                    (user, health, position.borrowed_amount),
-                );
-            }
         }
     }
 
@@ -890,19 +839,6 @@ impl LeveragePool {
         }
     }
 
-    pub fn get_lp_value(env: Env, lp: Address) -> i128 {
-        extend_instance(&env);
-
-        let lp_key = DataKey::LPShares(lp);
-        let shares: i128 = env.storage().instance().get(&lp_key).unwrap_or(0);
-        let total_shares = get_i128(&env, &DataKey::TotalShares);
-        let total_liquidity = get_i128(&env, &DataKey::TotalLiquidity);
-
-        if total_shares == 0 {
-            return 0;
-        }
-        shares * total_liquidity / total_shares
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -1011,7 +947,7 @@ mod test {
             price_feed_key: Symbol::new(&env, "XLM"),
             is_active: true,
         };
-        client.add_collateral_type(&admin, &coll_token, &config);
+        client.set_collateral_type(&admin, &coll_token, &config);
 
         // Mint initial tokens
         let pool_sac = token::StellarAssetClient::new(&env, &pool_asset);
@@ -1054,7 +990,6 @@ mod test {
         let lp1 = Address::generate(&env);
         pool_sac.mint(&lp1, &1000_0000000i128);
         client.lp_deposit(&lp1, &1000_0000000i128);
-        assert_eq!(client.get_lp_value(&lp1), 1000_0000000i128);
 
         // Second LP: proportional shares
         let lp2 = Address::generate(&env);
@@ -1097,7 +1032,7 @@ mod test {
             price_feed_key: Symbol::new(&env, "XLM"),
             is_active: true,
         };
-        client.add_collateral_type(&admin, &coll_token, &config);
+        client.set_collateral_type(&admin, &coll_token, &config);
 
         let pool_sac = token::StellarAssetClient::new(&env, &pool_asset);
         let coll_sac = token::StellarAssetClient::new(&env, &coll_token);
@@ -1296,7 +1231,7 @@ mod test {
             price_feed_key: Symbol::new(&env, "XLM"),
             is_active: true,
         };
-        client.add_collateral_type(&admin, &coll_token, &config);
+        client.set_collateral_type(&admin, &coll_token, &config);
 
         // Fund pool
         let pool_sac = token::StellarAssetClient::new(&env, &pool_asset);

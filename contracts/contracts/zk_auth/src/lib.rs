@@ -272,41 +272,6 @@ impl ZKAuth {
         }
     }
 
-    /// Full session info, None if expired or missing.
-    pub fn get_session(env: Env, user: Address) -> Option<Session> {
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_BUMP, INSTANCE_BUMP);
-
-        let session_key = DataKey::ActiveSession(user);
-        match env.storage().persistent().get::<_, Session>(&session_key) {
-            Some(session) if env.ledger().sequence() < session.expires_at_ledger => {
-                env.storage()
-                    .persistent()
-                    .extend_ttl(&session_key, LEDGER_BUMP, LEDGER_BUMP);
-                Some(session)
-            }
-            _ => None,
-        }
-    }
-
-    /// Ledgers remaining, None if no valid session.
-    pub fn get_time_remaining(env: Env, user: Address) -> Option<u32> {
-        env.storage()
-            .instance()
-            .extend_ttl(INSTANCE_BUMP, INSTANCE_BUMP);
-
-        let session_key = DataKey::ActiveSession(user);
-        match env.storage().persistent().get::<_, Session>(&session_key) {
-            Some(session) if env.ledger().sequence() < session.expires_at_ledger => {
-                env.storage()
-                    .persistent()
-                    .extend_ttl(&session_key, LEDGER_BUMP, LEDGER_BUMP);
-                Some(session.expires_at_ledger - env.ledger().sequence())
-            }
-            _ => None,
-        }
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -360,9 +325,6 @@ mod test {
 
         client.start_session(&user, &agent_pubkey, &hash, &1000u32, &dummy_proof(&env));
 
-        let session = client.get_session(&user).unwrap();
-        assert_eq!(session.session_id, 1);
-        assert_eq!(session.agent_pubkey, agent_pubkey);
         assert!(client.is_session_valid(&user));
         assert_eq!(client.get_agent_pubkey(&user), Some(agent_pubkey));
     }
@@ -381,8 +343,6 @@ mod test {
         env.ledger().set_sequence_number(env.ledger().sequence() + 721);
         assert!(!client.is_session_valid(&user));
         assert_eq!(client.get_agent_pubkey(&user), None);
-        assert_eq!(client.get_session(&user), None);
-        assert_eq!(client.get_time_remaining(&user), None);
     }
 
     #[test]
@@ -394,12 +354,10 @@ mod test {
         let hash = BytesN::from_array(&env, &[7u8; 32]);
 
         client.start_session(&user, &pubkey1, &hash, &1000u32, &dummy_proof(&env));
-        assert_eq!(client.get_session(&user).unwrap().session_id, 1);
+        assert_eq!(client.get_agent_pubkey(&user), Some(pubkey1));
 
         client.start_session(&user, &pubkey2, &hash, &2000u32, &dummy_proof(&env));
-        let session = client.get_session(&user).unwrap();
-        assert_eq!(session.session_id, 2);
-        assert_eq!(session.agent_pubkey, pubkey2);
+        assert_eq!(client.get_agent_pubkey(&user), Some(pubkey2));
     }
 
     #[test]
@@ -433,22 +391,6 @@ mod test {
         // Now expired
         env.ledger().set_sequence_number(env.ledger().sequence() + 1);
         assert!(!client.is_session_valid(&user));
-    }
-
-    #[test]
-    fn test_get_time_remaining() {
-        let (env, client, _admin) = setup();
-        let user = Address::generate(&env);
-        let agent_pubkey = BytesN::from_array(&env, &[42u8; 32]);
-        let hash = BytesN::from_array(&env, &[7u8; 32]);
-
-        client.start_session(&user, &agent_pubkey, &hash, &1000u32, &dummy_proof(&env));
-        let remaining = client.get_time_remaining(&user).unwrap();
-        assert_eq!(remaining, 1000);
-
-        env.ledger().set_sequence_number(env.ledger().sequence() + 500);
-        let remaining = client.get_time_remaining(&user).unwrap();
-        assert_eq!(remaining, 500);
     }
 
     #[test]

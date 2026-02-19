@@ -2,7 +2,7 @@
 
 use soroban_sdk::{
     contract, contractimpl, contracttype, contracterror, contractclient, symbol_short,
-    address_payload::AddressPayload, Address, BytesN, Env, Map, Vec, token,
+    address_payload::AddressPayload, Address, BytesN, Env, token,
 };
 
 // ---------------------------------------------------------------------------
@@ -156,27 +156,6 @@ impl AgentVault {
             .publish((symbol_short!("token"), symbol_short!("added")), token_sac);
     }
 
-    /// Admin: remove a token from the whitelist. Existing balances can still withdraw.
-    pub fn remove_supported_token(env: Env, caller: Address, token_sac: Address) {
-        extend_instance(&env);
-        let admin: Address = env
-            .storage()
-            .instance()
-            .get(&DataKey::Admin)
-            .unwrap_or_else(|| panic!("NotInitialized"));
-        admin.require_auth();
-        assert_eq!(caller, admin);
-
-        let key = DataKey::SupportedToken(token_sac.clone());
-        env.storage().persistent().set(&key, &false);
-        extend_persistent(&env, &key);
-
-        env.events().publish(
-            (symbol_short!("token"), symbol_short!("removed")),
-            token_sac,
-        );
-    }
-
     /// User deposits a supported token.
     pub fn deposit(env: Env, user: Address, token_sac: Address, amount: i128) {
         user.require_auth();
@@ -268,16 +247,6 @@ impl AgentVault {
         get_balance(&env, &user, &token_sac)
     }
 
-    /// Read-only: batch fetch balances.
-    pub fn get_all_balances(env: Env, user: Address, tokens: Vec<Address>) -> Map<Address, i128> {
-        extend_instance(&env);
-        let mut balances = Map::new(&env);
-        for token_addr in tokens.iter() {
-            let bal = get_balance(&env, &user, &token_addr);
-            balances.set(token_addr, bal);
-        }
-        balances
-    }
 }
 
 // ---------------------------------------------------------------------------
@@ -429,20 +398,6 @@ mod test {
         let bad_token = Address::generate(&env);
 
         client.deposit(&user, &bad_token, &100i128);
-    }
-
-    #[test]
-    fn test_get_all_balances() {
-        let (env, client, admin, token_sac, _token_admin) = setup_with_token();
-        let user = Address::generate(&env);
-
-        let sac_client = token::StellarAssetClient::new(&env, &token_sac);
-        sac_client.mint(&user, &1_000_0000000i128);
-        client.deposit(&user, &token_sac, &500_0000000i128);
-
-        let tokens = soroban_sdk::vec![&env, token_sac.clone()];
-        let balances = client.get_all_balances(&user, &tokens);
-        assert_eq!(balances.get(token_sac).unwrap(), 500_0000000i128);
     }
 
     #[test]
