@@ -38,6 +38,8 @@ fin/.env.production.local
 # Vercel
 fin/.vercel
 
+test_snapshots
+
 # TypeScript
 fin/*.tsbuildinfo
 fin/next-env.d.ts

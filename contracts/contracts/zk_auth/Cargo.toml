@@ -1,5 +1,5 @@
 [package]
-name = "ZKAuth"
+name = "zk-auth"
 version = "0.0.0"
 edition = "2021"
 publish = false
@@ -9,6 +9,8 @@ crate-type = ["lib", "cdylib"]
 doctest = false
 
 [dependencies]
-soroban-sdk = { version = "25.0.0", features = ["hazmat-crypto"] }
+soroban-sdk = { version = "25", features = ["hazmat-crypto"] }
+soroban-poseidon = "25"
+
 [dev-dependencies]
-soroban-sdk = { version = "25.0.0", features = ["hazmat-crypto"] }
+soroban-sdk = { version = "25", features = ["testutils", "hazmat-crypto"] }
