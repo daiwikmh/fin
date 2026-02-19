@@ -49,14 +49,14 @@ export default function RightSidebar({ isVisible, onToggle }: RightSidebarProps)
       const es = new EventSource(`${BRIDGE_URL}/api/logs/stream?token=${newToken}`);
       eventSourceRef.current = es;
 
-      es.addEventListener('connected', () => {
-        setState('connected');
-      });
-
       es.onmessage = (event) => {
         try {
           const entry: LogEntry = JSON.parse(event.data);
           setLogs((prev) => [...prev, entry]);
+          // Agent's first request triggers "system" source log
+          if (entry.source === 'system' && entry.message.includes('Agent connected')) {
+            setState('connected');
+          }
         } catch {
           // ignore parse errors
         }
@@ -179,26 +179,40 @@ Start by calling GET ${BRIDGE_URL}/api/bridge/pairs to see what's available, the
 
         {(state === 'token_ready' || state === 'connected') && (
           <div className="agent-panel">
-            <div className="agent-token-display">
-              <span className="agent-token-label">Your token:</span>
-              <div className="agent-token-row">
-                <code className="agent-token-value">{token}</code>
-                <button className="agent-token-copy-btn" onClick={handleCopy}>
-                  {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
-              </div>
-              <span className="agent-token-hint">Copy the prompt below and paste it to your OpenClaw bot</span>
-            </div>
+            {state === 'token_ready' && (
+              <>
+                <div className="agent-token-display">
+                  <span className="agent-token-label">Your token:</span>
+                  <div className="agent-token-row">
+                    <code className="agent-token-value">{token}</code>
+                    <button className="agent-token-copy-btn" onClick={handleCopy}>
+                      {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                  <span className="agent-token-hint">Copy the prompt below and paste it to your OpenClaw bot</span>
+                </div>
 
-            <div className="agent-config-snippet">
-              <div className="agent-config-header">
-                <span className="agent-config-label">Send to OpenClaw</span>
-                <button className="agent-token-copy-btn" onClick={handleCopyConfig}>
-                  {configCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                </button>
+                <div className="agent-config-snippet">
+                  <div className="agent-config-header">
+                    <span className="agent-config-label">Send to OpenClaw</span>
+                    <button className="agent-token-copy-btn" onClick={handleCopyConfig}>
+                      {configCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
+                  <pre className="agent-config-code">{getAgentPrompt()}</pre>
+                </div>
+              </>
+            )}
+
+            {state === 'connected' && (
+              <div className="agent-token-display">
+                <div className="agent-token-row">
+                  <span className="agent-terminal-dot live" />
+                  <span className="agent-token-label" style={{ color: '#00ff94' }}>Agent Connected</span>
+                </div>
+                <span className="agent-token-hint">OpenClaw is actively using your trading endpoints</span>
               </div>
-              <pre className="agent-config-code">{getAgentPrompt()}</pre>
-            </div>
+            )}
 
             <div className="agent-terminal">
               <div className="agent-terminal-header">

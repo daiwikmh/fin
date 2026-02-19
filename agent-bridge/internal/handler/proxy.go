@@ -22,6 +22,21 @@ func (h *ProxyHandler) Handle(w http.ResponseWriter, r *http.Request) {
 
 	// Strip /api/bridge prefix and proxy to /api/agent on the frontend
 	path := strings.TrimPrefix(r.URL.Path, "/api/bridge")
+
+	// On agent's first request, notify the frontend via SSE
+	if h.Store.MarkAgentConnected(token) {
+		h.Store.Publish(token, store.LogEntry{
+			Message: "Agent connected and ready",
+			Source:  "system",
+		})
+	}
+
+	// Log every agent request to the frontend terminal
+	h.Store.Publish(token, store.LogEntry{
+		Message: r.Method + " " + path,
+		Source:  "agent",
+	})
+
 	target := h.FrontendURL + "/api/agent" + path
 	if r.URL.RawQuery != "" {
 		target += "?" + r.URL.RawQuery

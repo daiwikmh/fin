@@ -15,10 +15,11 @@ type LogEntry struct {
 }
 
 type Connection struct {
-	Token       string
-	CreatedAt   time.Time
-	subscribers map[chan LogEntry]bool
-	mu          sync.RWMutex
+	Token          string
+	CreatedAt      time.Time
+	AgentConnected bool
+	subscribers    map[chan LogEntry]bool
+	mu             sync.RWMutex
 }
 
 type Store struct {
@@ -84,6 +85,36 @@ func (s *Store) Unsubscribe(token string, ch chan LogEntry) {
 	delete(conn.subscribers, ch)
 	conn.mu.Unlock()
 	close(ch)
+}
+
+// MarkAgentConnected returns true on the first call per token (agent's first request).
+func (s *Store) MarkAgentConnected(token string) bool {
+	s.mu.RLock()
+	conn, ok := s.connections[token]
+	s.mu.RUnlock()
+	if !ok {
+		return false
+	}
+
+	conn.mu.Lock()
+	defer conn.mu.Unlock()
+	if conn.AgentConnected {
+		return false
+	}
+	conn.AgentConnected = true
+	return true
+}
+
+func (s *Store) IsAgentConnected(token string) bool {
+	s.mu.RLock()
+	conn, ok := s.connections[token]
+	s.mu.RUnlock()
+	if !ok {
+		return false
+	}
+	conn.mu.RLock()
+	defer conn.mu.RUnlock()
+	return conn.AgentConnected
 }
 
 func (s *Store) Publish(token string, entry LogEntry) bool {

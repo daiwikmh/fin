@@ -34,6 +34,18 @@ func (h *SkillsHandler) List(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
+	// Agent fetching skills = first contact
+	if h.Store.MarkAgentConnected(token) {
+		h.Store.Publish(token, store.LogEntry{
+			Message: "Agent connected and ready",
+			Source:  "system",
+		})
+	}
+	h.Store.Publish(token, store.LogEntry{
+		Message: "GET /skills — discovering capabilities",
+		Source:  "agent",
+	})
+
 	skills := []Skill{
 		// ── Read skills ──
 		{
