@@ -1,11 +1,15 @@
 'use client';
 
 import { useState, useRef, useEffect, useCallback } from 'react';
-import { Wallet, ChevronLeft, ChevronRight, Copy, Check } from 'lucide-react';
+import { Wallet, ChevronLeft, ChevronRight, Copy, Check, Loader2, X, ArrowDown } from 'lucide-react';
+import { useWallet } from '@/utils/wallet';
+import type { OrderBook, TransactionResult } from '@/types/sdex.types';
 
 const BRIDGE_URL = process.env.NEXT_PUBLIC_AGENT_BRIDGE_URL || 'http://localhost:8090';
 
 type ConnectionState = 'disconnected' | 'generating' | 'token_ready' | 'connected';
+type SidebarTab = 'trade' | 'agent';
+type TradeSide = 'buy' | 'sell';
 
 interface LogEntry {
   message: string;
@@ -16,13 +20,55 @@ interface LogEntry {
 interface RightSidebarProps {
   isVisible: boolean;
   onToggle: () => void;
+  baseToken: string;
+  quoteToken: string;
+  orderBook: OrderBook | null;
+  isSubmitting: boolean;
+  lastResult: TransactionResult | null;
+  onPlaceOrder: (side: 'buy' | 'sell', amount: string, price: string) => Promise<TransactionResult>;
+  onMarketOrder: (side: 'buy' | 'sell', amount: string, slippage: number) => Promise<TransactionResult>;
+  onClearResult: () => void;
 }
 
-export default function RightSidebar({ isVisible, onToggle }: RightSidebarProps) {
-  const [state, setState] = useState<ConnectionState>('disconnected');
+const SLIPPAGES = ['0.1', '0.5', '1.0'];
+const PERCENTAGES = [25, 50, 75, 100];
+
+function TokenPill({ symbol }: { symbol: string }) {
+  return (
+    <span className="token-pill">
+      <span className="token-pill-dot" />
+      {symbol}
+    </span>
+  );
+}
+
+export default function RightSidebar({
+  isVisible, onToggle,
+  baseToken, quoteToken,
+  orderBook, isSubmitting, lastResult,
+  onPlaceOrder, onMarketOrder, onClearResult,
+}: RightSidebarProps) {
+  const { isConnected } = useWallet();
+
+  const [activeTab, setActiveTab] = useState<SidebarTab>('trade');
+
+  // Trade state
+  const [tradeSide, setTradeSide] = useState<TradeSide>('buy');
+  const [orderType, setOrderType] = useState<'limit' | 'market'>('limit');
+  const [buyAmount, setBuyAmount] = useState('');
+  const [buyPrice, setBuyPrice] = useState('');
+  const [sellAmount, setSellAmount] = useState('');
+  const [sellPrice, setSellPrice] = useState('');
+  const [buyPct, setBuyPct] = useState(0);
+  const [sellPct, setSellPct] = useState(0);
+  const [slippage, setSlippage] = useState('0.5');
+
+  // Agent state
+  const [connState, setConnState] = useState<ConnectionState>('disconnected');
   const [token, setToken] = useState('');
   const [logs, setLogs] = useState<LogEntry[]>([]);
   const [copied, setCopied] = useState(false);
+  const [configCopied, setConfigCopied] = useState(false);
   const eventSourceRef = useRef<EventSource | null>(null);
   const logsEndRef = useRef<HTMLDivElement>(null);
 
@@ -31,20 +77,49 @@ export default function RightSidebar({ isVisible, onToggle }: RightSidebarProps)
   }, [logs]);
 
   useEffect(() => {
-    return () => {
-      eventSourceRef.current?.close();
-    };
+    return () => { eventSourceRef.current?.close(); };
   }, []);
 
+  // Derived trade values
+  const bestAsk = orderBook?.asks[0]?.price ?? '';
+  const bestBid = orderBook?.bids[0]?.price ?? '';
+  const isBuy = tradeSide === 'buy';
+  const activeBuyPrice = buyPrice || bestAsk;
+  const activeSellPrice = sellPrice || bestBid;
+  const amount = isBuy ? buyAmount : sellAmount;
+  const price = isBuy ? buyPrice : sellPrice;
+  const activePrice = isBuy ? activeBuyPrice : activeSellPrice;
+  const bestPrice = isBuy ? bestAsk : bestBid;
+  const payToken = isBuy ? quoteToken : baseToken;
+  const receiveToken = isBuy ? baseToken : quoteToken;
+  const buyReceiveAmount = buyAmount && activeBuyPrice
+    ? (parseFloat(buyAmount) / parseFloat(activeBuyPrice)).toFixed(7) : '';
+  const sellReceiveAmount = sellAmount && activeSellPrice
+    ? (parseFloat(sellAmount) * parseFloat(activeSellPrice)).toFixed(7) : '';
+  const receiveAmount = isBuy ? buyReceiveAmount : sellReceiveAmount;
+  const canSubmit = isConnected && !isSubmitting && !!amount && (orderType === 'market' || !!activePrice);
+
+  const handleSubmit = async () => {
+    if (!amount) return;
+    if (isBuy) {
+      if (orderType === 'market') await onMarketOrder('buy', amount, parseFloat(slippage));
+      else if (activeBuyPrice) await onPlaceOrder('buy', amount, activeBuyPrice);
+    } else {
+      if (orderType === 'market') await onMarketOrder('sell', amount, parseFloat(slippage));
+      else if (activeSellPrice) await onPlaceOrder('sell', amount, activeSellPrice);
+    }
+  };
+
+  // Agent handlers
   const handleConnect = useCallback(async () => {
-    setState('generating');
+    setConnState('generating');
     try {
       const res = await fetch(`${BRIDGE_URL}/api/token/generate`, { method: 'POST' });
       if (!res.ok) throw new Error('Failed to generate token');
       const data = await res.json();
       const newToken = data.token;
       setToken(newToken);
-      setState('token_ready');
+      setConnState('token_ready');
 
       const es = new EventSource(`${BRIDGE_URL}/api/logs/stream?token=${newToken}`);
       eventSourceRef.current = es;
@@ -53,20 +128,15 @@ export default function RightSidebar({ isVisible, onToggle }: RightSidebarProps)
         try {
           const entry: LogEntry = JSON.parse(event.data);
           setLogs((prev) => [...prev, entry]);
-          // Agent's first request triggers "system" source log
           if (entry.source === 'system' && entry.message.includes('Agent connected')) {
-            setState('connected');
+            setConnState('connected');
           }
-        } catch {
-          // ignore parse errors
-        }
+        } catch { /* ignore parse errors */ }
       };
 
-      es.onerror = () => {
-        // EventSource will auto-reconnect
-      };
+      es.onerror = () => { /* auto-reconnect */ };
     } catch {
-      setState('disconnected');
+      setConnState('disconnected');
     }
   }, []);
 
@@ -107,7 +177,6 @@ Start by calling GET ${BRIDGE_URL}/api/bridge/pairs to see what's available, the
     setTimeout(() => setCopied(false), 2000);
   }, [token]);
 
-  const [configCopied, setConfigCopied] = useState(false);
   const handleCopyConfig = useCallback(() => {
     navigator.clipboard.writeText(getAgentPrompt());
     setConfigCopied(true);
@@ -115,11 +184,7 @@ Start by calling GET ${BRIDGE_URL}/api/bridge/pairs to see what's available, the
   }, [getAgentPrompt]);
 
   const formatTime = (ts: string) => {
-    try {
-      return new Date(ts).toLocaleTimeString();
-    } catch {
-      return '';
-    }
+    try { return new Date(ts).toLocaleTimeString(); } catch { return ''; }
   };
 
   return (
@@ -133,106 +198,284 @@ Start by calling GET ${BRIDGE_URL}/api/bridge/pairs to see what's available, the
       </button>
 
       <div className={`sidebar sidebar-right ${!isVisible ? 'hidden' : ''}`}>
-        <div className="sidebar-header">
-          <h3 className="sidebar-title">Agentic Actions</h3>
+        {/* Trade / Agent tab bar */}
+        <div className="sidebar-header" style={{ padding: '0.5rem 1rem' }}>
+          <div className="rs-tabs">
+            <button
+              className={`rs-tab ${activeTab === 'trade' ? 'active' : ''}`}
+              onClick={() => setActiveTab('trade')}
+            >
+              Trade
+            </button>
+            <button
+              className={`rs-tab ${activeTab === 'agent' ? 'active' : ''}`}
+              onClick={() => setActiveTab('agent')}
+            >
+              Agent
+            </button>
+          </div>
         </div>
 
-        {state === 'disconnected' && (
-          <div className="portfolio-content">
-            <div className="portfolio-cta">
-              <div className="portfolio-icon-wrapper">
-                <div className="portfolio-icon-bg">
-                  <div className="portfolio-icon-gradient"></div>
-                  <div className="portfolio-icon">
-                    <Wallet className="w-12 h-12" />
-                  </div>
-                </div>
-              </div>
-              <h4 className="portfolio-title">Connect OpenClaw</h4>
-              <p className="portfolio-description">
-                Connect your Openclaw to start your agentic journey
-              </p>
-              <button className="connect-wallet-btn" onClick={handleConnect}>
-                Connect telegram
-              </button>
-            </div>
-          </div>
-        )}
-
-        {state === 'generating' && (
-          <div className="portfolio-content">
-            <div className="portfolio-cta">
-              <div className="portfolio-icon-wrapper">
-                <div className="portfolio-icon-bg">
-                  <div className="portfolio-icon-gradient"></div>
-                  <div className="portfolio-icon">
-                    <Wallet className="w-12 h-12" />
-                  </div>
-                </div>
-              </div>
-              <button className="connect-wallet-btn" disabled>
-                Generating...
-              </button>
-            </div>
-          </div>
-        )}
-
-        {(state === 'token_ready' || state === 'connected') && (
-          <div className="agent-panel">
-            {state === 'token_ready' && (
-              <>
-                <div className="agent-token-display">
-                  <span className="agent-token-label">Your token:</span>
-                  <div className="agent-token-row">
-                    <code className="agent-token-value">{token}</code>
-                    <button className="agent-token-copy-btn" onClick={handleCopy}>
-                      {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                  <span className="agent-token-hint">Copy the prompt below and paste it to your OpenClaw bot</span>
-                </div>
-
-                <div className="agent-config-snippet">
-                  <div className="agent-config-header">
-                    <span className="agent-config-label">Send to OpenClaw</span>
-                    <button className="agent-token-copy-btn" onClick={handleCopyConfig}>
-                      {configCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
-                  </div>
-                  <pre className="agent-config-code">{getAgentPrompt()}</pre>
-                </div>
-              </>
-            )}
-
-            {state === 'connected' && (
-              <div className="agent-token-display">
-                <div className="agent-token-row">
-                  <span className="agent-terminal-dot live" />
-                  <span className="agent-token-label" style={{ color: '#00ff94' }}>Agent Connected</span>
-                </div>
-                <span className="agent-token-hint">OpenClaw is actively using your trading endpoints</span>
+        {/* ── TRADE TAB ── */}
+        {activeTab === 'trade' && (
+          <div className="rs-trade-panel">
+            {lastResult && (
+              <div className={`tx-toast ${lastResult.success ? 'success' : 'error'}`}>
+                <span>
+                  {lastResult.success
+                    ? `Submitted · ${lastResult.txHash?.slice(0, 12)}…`
+                    : lastResult.errorMessage}
+                </span>
+                <button className="tx-toast-close" onClick={onClearResult}>
+                  <X size={14} />
+                </button>
               </div>
             )}
 
-            <div className="agent-terminal">
-              <div className="agent-terminal-header">
-                <span className="agent-terminal-title">Agent Logs</span>
-                <span className={`agent-terminal-dot ${state === 'connected' ? 'live' : ''}`} />
-              </div>
-              <div className="agent-terminal-body">
-                {logs.length === 0 && (
-                  <div className="agent-terminal-empty">Waiting for agent logs...</div>
+            {/* Order type */}
+            <div className="tt-tabs">
+              {(['limit', 'market'] as const).map((t) => (
+                <button
+                  key={t}
+                  onClick={() => setOrderType(t)}
+                  className={`tt-tab ${orderType === t ? 'active' : ''}`}
+                >
+                  {t}
+                </button>
+              ))}
+            </div>
+
+            {/* Buy / Sell sub-tabs */}
+            <div className="rs-side-tabs">
+              <button
+                className={`rs-side-tab buy ${tradeSide === 'buy' ? 'active' : ''}`}
+                onClick={() => setTradeSide('buy')}
+              >
+                Buy
+              </button>
+              <button
+                className={`rs-side-tab sell ${tradeSide === 'sell' ? 'active' : ''}`}
+                onClick={() => setTradeSide('sell')}
+              >
+                Sell
+              </button>
+            </div>
+
+            {/* Order form */}
+            <div className={`order-card ${tradeSide}`} style={{ borderRadius: '0.75rem' }}>
+              <div className="order-card-header">
+                <span className="order-card-title">{isBuy ? 'Buy' : 'Sell'} {baseToken}</span>
+                {bestPrice && (
+                  <span className="order-card-best">
+                    Best: <span>{parseFloat(bestPrice).toFixed(6)}</span>
+                  </span>
                 )}
-                {logs.map((entry, i) => (
-                  <div className="agent-log-entry" key={i}>
-                    <span className="agent-log-time">{formatTime(entry.timestamp)}</span>
-                    <span className="agent-log-msg">{entry.message}</span>
-                  </div>
-                ))}
-                <div ref={logsEndRef} />
               </div>
+
+              {orderType === 'limit' && (
+                <div>
+                  <span className="field-label">Price</span>
+                  <div className="input-row">
+                    <input
+                      type="number"
+                      placeholder={bestPrice || '0.00'}
+                      value={price}
+                      onChange={(e) => isBuy ? setBuyPrice(e.target.value) : setSellPrice(e.target.value)}
+                    />
+                    <TokenPill symbol={quoteToken} />
+                  </div>
+                </div>
+              )}
+
+              <div>
+                <span className="field-label">You Pay</span>
+                <div className="input-row">
+                  <input
+                    type="number"
+                    placeholder="0.00"
+                    value={amount}
+                    onChange={(e) => isBuy ? setBuyAmount(e.target.value) : setSellAmount(e.target.value)}
+                  />
+                  <TokenPill symbol={payToken} />
+                </div>
+              </div>
+
+              <div className="pct-selector">
+                {PERCENTAGES.map((pct) => (
+                  <button
+                    key={pct}
+                    onClick={() => isBuy ? setBuyPct(pct) : setSellPct(pct)}
+                    className={`pct-btn ${tradeSide} ${(isBuy ? buyPct : sellPct) === pct ? 'active' : ''}`}
+                  >
+                    {pct}%
+                  </button>
+                ))}
+              </div>
+
+              <div className="arrow-divider">
+                <span className="arrow-divider-icon"><ArrowDown size={14} /></span>
+              </div>
+
+              <div>
+                <span className="field-label">You Receive</span>
+                <div className="input-row">
+                  <input
+                    type="text"
+                    placeholder={activePrice ? '0.00' : '—'}
+                    value={receiveAmount}
+                    readOnly
+                    className={receiveAmount ? (isBuy ? 'receive-value' : 'receive-value-sell') : ''}
+                  />
+                  <TokenPill symbol={receiveToken} />
+                </div>
+                {activePrice && (
+                  <p className="input-rate">
+                    Rate: 1 {receiveToken} = {parseFloat(activePrice).toFixed(7)} {payToken}
+                  </p>
+                )}
+              </div>
+
+              <div className="meta-bar">
+                <span className="meta-bar-label">Slippage</span>
+                <div className="slippage-group">
+                  {SLIPPAGES.map((s) => (
+                    <button
+                      key={s}
+                      onClick={() => setSlippage(s)}
+                      className={`slip-btn ${tradeSide} ${slippage === s ? 'active' : ''}`}
+                    >
+                      {s}%
+                    </button>
+                  ))}
+                </div>
+              </div>
+
+              <div className="fee-row">
+                <span>Network fee</span>
+                <span>0.00001 XLM</span>
+              </div>
+
+              <button
+                onClick={handleSubmit}
+                disabled={!canSubmit}
+                className={isBuy ? 'btn-buy' : 'btn-sell'}
+              >
+                {!isConnected ? (
+                  'Connect Wallet'
+                ) : isSubmitting ? (
+                  <span className="btn-submitting">
+                    <Loader2 size={16} className="animate-spin" />
+                    Submitting…
+                  </span>
+                ) : (
+                  `${isBuy ? 'Buy' : 'Sell'} ${baseToken}`
+                )}
+              </button>
             </div>
           </div>
+        )}
+
+        {/* ── AGENT TAB ── */}
+        {activeTab === 'agent' && (
+          <>
+            {connState === 'disconnected' && (
+              <div className="portfolio-content">
+                <div className="portfolio-cta">
+                  <div className="portfolio-icon-wrapper">
+                    <div className="portfolio-icon-bg">
+                      <div className="portfolio-icon-gradient"></div>
+                      <div className="portfolio-icon">
+                        <Wallet className="w-12 h-12" />
+                      </div>
+                    </div>
+                  </div>
+                  <h4 className="portfolio-title">Connect OpenClaw</h4>
+                  <p className="portfolio-description">
+                    Connect your Openclaw to start your agentic journey
+                  </p>
+                  <button className="connect-wallet-btn" onClick={handleConnect}>
+                    Connect Openclaw
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {connState === 'generating' && (
+              <div className="portfolio-content">
+                <div className="portfolio-cta">
+                  <div className="portfolio-icon-wrapper">
+                    <div className="portfolio-icon-bg">
+                      <div className="portfolio-icon-gradient"></div>
+                      <div className="portfolio-icon">
+                        <Wallet className="w-12 h-12" />
+                      </div>
+                    </div>
+                  </div>
+                  <button className="connect-wallet-btn" disabled>
+                    Generating...
+                  </button>
+                </div>
+              </div>
+            )}
+
+            {(connState === 'token_ready' || connState === 'connected') && (
+              <div className="agent-panel">
+                {connState === 'token_ready' && (
+                  <>
+                    <div className="agent-token-display">
+                      <span className="agent-token-label">Your token:</span>
+                      <div className="agent-token-row">
+                        <code className="agent-token-value">{token}</code>
+                        <button className="agent-token-copy-btn" onClick={handleCopy}>
+                          {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                      <span className="agent-token-hint">Copy the prompt below and paste it to your OpenClaw bot</span>
+                    </div>
+
+                    <div className="agent-config-snippet">
+                      <div className="agent-config-header">
+                        <span className="agent-config-label">Send to OpenClaw</span>
+                        <button className="agent-token-copy-btn" onClick={handleCopyConfig}>
+                          {configCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                        </button>
+                      </div>
+                      <pre className="agent-config-code">{getAgentPrompt()}</pre>
+                    </div>
+                  </>
+                )}
+
+                {connState === 'connected' && (
+                  <div className="agent-token-display">
+                    <div className="agent-token-row">
+                      <span className="agent-terminal-dot live" />
+                      <span className="agent-token-label" style={{ color: '#00ff94' }}>Agent Connected</span>
+                    </div>
+                    <span className="agent-token-hint">OpenClaw is actively using your trading endpoints</span>
+                  </div>
+                )}
+
+                <div className="agent-terminal">
+                  <div className="agent-terminal-header">
+                    <span className="agent-terminal-title">Agent Logs</span>
+                    <span className={`agent-terminal-dot ${connState === 'connected' ? 'live' : ''}`} />
+                  </div>
+                  <div className="agent-terminal-body">
+                    {logs.length === 0 && (
+                      <div className="agent-terminal-empty">Waiting for agent logs...</div>
+                    )}
+                    {logs.map((entry, i) => (
+                      <div className="agent-log-entry" key={i}>
+                        <span className="agent-log-time">{formatTime(entry.timestamp)}</span>
+                        <span className="agent-log-msg">{entry.message}</span>
+                      </div>
+                    ))}
+                    <div ref={logsEndRef} />
+                  </div>
+                </div>
+              </div>
+            )}
+          </>
         )}
       </div>
     </>

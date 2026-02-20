@@ -72,7 +72,7 @@ export default function LeftSidebar({ isVisible, onToggle, selectedPair, onSelec
       <button
         onClick={onToggle}
         className="sidebar-toggle left"
-        style={{ left: isVisible ? '320px' : '0px' }}
+        style={{ left: isVisible ? '260px' : '0px' }}
       >
         {isVisible ? <ChevronLeft className="w-4 h-4" /> : <ChevronRight className="w-4 h-4" />}
       </button>

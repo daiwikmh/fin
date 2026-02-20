@@ -1,6 +1,6 @@
 'use client';
 
-import { ChevronDown } from 'lucide-react';
+import { ChevronDown, Wallet } from 'lucide-react';
 import { useEffect, useState } from 'react';
 import { initWalletKit, useWallet } from '@/utils/wallet';
 
@@ -8,12 +8,10 @@ export default function Header() {
   const { address, isConnecting, isConnected, network, connectWallet, disconnectWallet, changeNetwork, formatAddress } = useWallet();
   const [showNetworkDropdown, setShowNetworkDropdown] = useState(false);
 
-  // Initialize wallet kit on component mount
   useEffect(() => {
     initWalletKit();
   }, []);
 
-  // Close dropdown when clicking outside
   useEffect(() => {
     const handleClickOutside = () => setShowNetworkDropdown(false);
     if (showNetworkDropdown) {
@@ -29,31 +27,22 @@ export default function Header() {
     }
   };
 
-  const getNetworkDisplay = () => {
-    return network === 'MAINNET' ? 'Mainnet' : 'Testnet';
-  };
-
-  const getNetworkIcon = () => {
-    return network === 'MAINNET' ? '🌐' : '🧪';
-  };
-
   return (
     <header className="header">
       <div className="header-container">
-        {/* Logo and Navigation */}
-        <div className="flex items-center gap-6">
+        {/* Logo + compact nav */}
+        <div className="flex items-center gap-3">
           <div className="header-logo">Arena</div>
           <nav className="header-nav">
             <button className="header-nav-item">Swap</button>
             <button className="header-nav-item active">Pro</button>
-            <button className="header-nav-item">Aqua</button>
             <button className="header-nav-item">Portfolio</button>
           </nav>
         </div>
 
-        {/* Network Selector and Connect Wallet */}
-        <div className="flex items-center gap-4">
-          {/* Network Selector */}
+        {/* Right side controls */}
+        <div className="flex items-center gap-3">
+          {/* Network pill */}
           <div style={{ position: 'relative' }}>
             <button
               className="network-selector"
@@ -62,106 +51,90 @@ export default function Header() {
                 setShowNetworkDropdown(!showNetworkDropdown);
               }}
             >
-              <span style={{ fontSize: '16px' }}>{getNetworkIcon()}</span>
-              <span className="network-name">Stellar {getNetworkDisplay()}</span>
-              <ChevronDown className="w-4 h-4 text-gray-400" />
+              <span
+                style={{
+                  width: '0.45rem',
+                  height: '0.45rem',
+                  borderRadius: '50%',
+                  background: network === 'MAINNET' ? '#00ff94' : '#facc15',
+                  flexShrink: 0,
+                }}
+              />
+              <span className="network-name">{network === 'MAINNET' ? 'Mainnet' : 'Testnet'}</span>
+              <ChevronDown className="w-3.5 h-3.5 text-gray-500" />
             </button>
 
-            {/* Network Dropdown */}
             {showNetworkDropdown && (
               <div
                 style={{
                   position: 'absolute',
                   top: 'calc(100% + 8px)',
                   right: 0,
-                  background: '#1a1b1e',
-                  border: '1px solid #2d2e33',
-                  borderRadius: '8px',
-                  minWidth: '180px',
+                  background: '#111',
+                  border: '1px solid #1e1e1e',
+                  borderRadius: '0.75rem',
+                  minWidth: '160px',
                   zIndex: 1000,
                   overflow: 'hidden',
                 }}
               >
-                <button
-                  onClick={() => handleNetworkChange('MAINNET')}
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: network === 'MAINNET' ? '#2d2e33' : 'transparent',
-                    border: 'none',
-                    color: '#fff',
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    fontSize: '14px',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (network !== 'MAINNET') {
-                      e.currentTarget.style.background = '#25262b';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (network !== 'MAINNET') {
-                      e.currentTarget.style.background = 'transparent';
-                    }
-                  }}
-                >
-                  <span>🌐</span>
-                  <span>Mainnet</span>
-                  {network === 'MAINNET' && <span style={{ marginLeft: 'auto', color: '#4ade80' }}>✓</span>}
-                </button>
-                <button
-                  onClick={() => handleNetworkChange('TESTNET')}
-                  style={{
-                    width: '100%',
-                    padding: '12px 16px',
-                    background: network === 'TESTNET' ? '#2d2e33' : 'transparent',
-                    border: 'none',
-                    color: '#fff',
-                    textAlign: 'left',
-                    cursor: 'pointer',
-                    display: 'flex',
-                    alignItems: 'center',
-                    gap: '8px',
-                    fontSize: '14px',
-                  }}
-                  onMouseEnter={(e) => {
-                    if (network !== 'TESTNET') {
-                      e.currentTarget.style.background = '#25262b';
-                    }
-                  }}
-                  onMouseLeave={(e) => {
-                    if (network !== 'TESTNET') {
-                      e.currentTarget.style.background = 'transparent';
-                    }
-                  }}
-                >
-                  <span>🧪</span>
-                  <span>Testnet</span>
-                  {network === 'TESTNET' && <span style={{ marginLeft: 'auto', color: '#4ade80' }}>✓</span>}
-                </button>
+                {(['MAINNET', 'TESTNET'] as const).map((n) => (
+                  <button
+                    key={n}
+                    onClick={() => handleNetworkChange(n)}
+                    style={{
+                      width: '100%',
+                      padding: '10px 14px',
+                      background: network === n ? '#1a1a1a' : 'transparent',
+                      border: 'none',
+                      color: '#fff',
+                      textAlign: 'left',
+                      cursor: 'pointer',
+                      display: 'flex',
+                      alignItems: 'center',
+                      gap: '8px',
+                      fontSize: '13px',
+                    }}
+                    onMouseEnter={(e) => {
+                      if (network !== n) e.currentTarget.style.background = '#141414';
+                    }}
+                    onMouseLeave={(e) => {
+                      if (network !== n) e.currentTarget.style.background = 'transparent';
+                    }}
+                  >
+                    <span
+                      style={{
+                        width: '0.4rem',
+                        height: '0.4rem',
+                        borderRadius: '50%',
+                        background: n === 'MAINNET' ? '#00ff94' : '#facc15',
+                        flexShrink: 0,
+                      }}
+                    />
+                    <span>{n === 'MAINNET' ? 'Mainnet' : 'Testnet'}</span>
+                    {network === n && (
+                      <span style={{ marginLeft: 'auto', color: '#00ff94', fontSize: '11px' }}>✓</span>
+                    )}
+                  </button>
+                ))}
               </div>
             )}
           </div>
 
-          {/* Stellar Wallet Button */}
+          {/* Wallet button */}
           {isConnected ? (
-            <button
-              className="connect-wallet-btn"
-              onClick={disconnectWallet}
-              title={address || ''}
-            >
-              {formatAddress(address || '')}
+            <button className="wallet-btn connected" onClick={disconnectWallet} title={address || ''}>
+              <span className="wallet-btn-dot" />
+              <span className="wallet-btn-address">{formatAddress(address || '')}</span>
             </button>
           ) : (
             <button
-              className="connect-wallet-btn"
+              className="wallet-btn"
               onClick={connectWallet}
               disabled={isConnecting}
             >
-              {isConnecting ? 'Connecting...' : 'Connect Wallet'}
+              <Wallet className="w-3.5 h-3.5" />
+              <span>{isConnecting ? 'Connecting…' : 'Connect Wallet'}</span>
             </button>
           )}
         </div>
