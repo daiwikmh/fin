@@ -6,7 +6,7 @@ import { z } from 'zod';
 import { setCurrentNetwork, getAsset, type NetworkId } from '@/configs/assets';
 import { getMidPrice, getOrderBookBySymbol } from '@/actions/orderbook';
 import { getOpenOffers, getTradeHistory, buildTrustlineXdrByCode, getTrustlineStatus } from '@/actions/account';
-import { buildLimitOrderXdrBySymbol, buildMarketOrderXdrBySymbol } from '@/actions/trade';
+import { buildLimitOrderXdrBySymbol, buildMarketOrderXdrBySymbol, buildBuyMarketOrderXdrBySymbol } from '@/actions/trade';
 
 // Use createOpenAI to target OpenRouter's base URL.
 // Always call openrouter.chat() — not openrouter() — so the SDK sends to
@@ -45,10 +45,11 @@ Current context:
 
 Rules:
 1. You NEVER move funds yourself. You build unsigned XDR transactions.
-2. When the user asks to buy or sell or place any order, you MUST immediately call the correct build tool (build_limit_order or build_market_order). Do NOT just describe or promise to do it. Call the tool first, then write a short explanation after.
+2. When the user asks to buy, sell, or place any order, call build_market_order or build_limit_order IMMEDIATELY as your very first action. Do NOT call check_trustline, get_price, get_order_book, or any other tool first. Do NOT describe what you are about to do. Call the build tool first, then write one short sentence after.
 3. If wallet is disconnected, ask user to connect before calling any build tool.
-4. Keep replies short and beginner-friendly.
-5. After the tool runs, tell the user to review and sign the preview card that appeared.
+4. Keep replies short and beginner-friendly. Output ONLY clean plain text — no code blocks, no internal reasoning, no function names, no JSON.
+5. After the build tool runs, tell the user to review and sign the preview card that appeared.
+6. If a tool returns count=0 or an empty list, that is a valid result — tell the user plainly (e.g. "You have no trades yet"). Never treat an empty result as an error.
 `;
   // Convert v6 UIMessages → CoreMessages (the chat-completions "messages" array)
   const coreMessages = await convertToModelMessages(messages ?? []);
@@ -121,6 +122,9 @@ Rules:
           if (!walletAddress) return { error: 'Wallet not connected' };
           try {
             const offers = await getOpenOffers(walletAddress);
+            if (offers.length === 0) {
+              return { count: 0, offers: [], message: 'No open orders. This account has no active DEX offers.' };
+            }
             return {
               count: offers.length,
               offers: offers.map((o) => ({
@@ -142,6 +146,9 @@ Rules:
           if (!walletAddress) return { error: 'Wallet not connected' };
           try {
             const trades = await getTradeHistory(walletAddress, limit);
+            if (trades.length === 0) {
+              return { count: 0, trades: [], message: 'No trades found. This account has not made any DEX trades yet.' };
+            }
             return {
               count: trades.length,
               trades: trades.slice(0, 5).map((t) => ({
@@ -230,27 +237,45 @@ Rules:
           slippage: z.number().min(0.1).max(5).default(0.5).describe('Slippage tolerance %'),
         }),
         execute: async ({ symbol, side, amount, slippage }: { symbol: string; side: 'buy' | 'sell'; amount: string; slippage: number }) => {
-          console.log('[build_market_order] called', { symbol, side, amount, slippage, walletAddress, netId });
-          if (!walletAddress) {
-            console.log('[build_market_order] no wallet');
-            return { error: 'Wallet not connected' };
-          }
+          if (!walletAddress) return { error: 'Wallet not connected' };
           try {
-            const result = await buildMarketOrderXdrBySymbol({
-              accountId: walletAddress,
-              pairSymbol: symbol,
-              side,
-              amount,
-              slippagePercent: slippage,
-            });
-            const [base] = symbol.split('/');
-            const out = {
-              ...result,
-              action: 'market_order',
-              description: `Market ${side === 'buy' ? 'buy' : 'sell'} ${amount} ${base} (${slippage}% slippage)`,
-            };
-            console.log('[build_market_order] success, xdr length:', out.xdr?.length, 'passphrase:', out.networkPassphrase);
-            return out;
+            const [base, quote] = symbol.split('/');
+            const ob = await getOrderBookBySymbol(symbol);
+
+            let description: string;
+            let result: { xdr: string; networkPassphrase: string };
+
+            if (side === 'buy') {
+              // pathPaymentStrictReceive: user receives EXACTLY `amount` of base (XLM).
+              // We pay at most sendMax of quote (USDC), calculated from the ask price
+              // plus a slippage buffer so the order doesn't get rejected on price movement.
+              const askPrice = parseFloat(ob.asks[0]?.price ?? '0');
+              if (!askPrice) return { error: `No sell offers for ${symbol}` };
+              const usdcEstimate = parseFloat(amount) * askPrice;
+              const sendMax = (usdcEstimate * (1 + slippage / 100)).toFixed(7);
+              description = `Market buy ${amount} ${base} (~${usdcEstimate.toFixed(4)} ${quote} at ask ${askPrice.toFixed(6)})`;
+              result = await buildBuyMarketOrderXdrBySymbol({
+                accountId: walletAddress,
+                pairSymbol: symbol,
+                destAmount: parseFloat(amount).toFixed(7),
+                sendMax,
+              });
+            } else {
+              // pathPaymentStrictSend: user sells EXACTLY `amount` of base (XLM).
+              const bidPrice = parseFloat(ob.bids[0]?.price ?? '0');
+              if (!bidPrice) return { error: `No buy offers for ${symbol}` };
+              const sendAmount = parseFloat(amount).toFixed(7);
+              description = `Market sell ${amount} ${base} (~${(parseFloat(amount) * bidPrice).toFixed(4)} ${quote} at bid ${bidPrice.toFixed(6)})`;
+              result = await buildMarketOrderXdrBySymbol({
+                accountId: walletAddress,
+                pairSymbol: symbol,
+                side,
+                amount: sendAmount,
+                slippagePercent: slippage,
+              });
+            }
+
+            return { ...result, action: 'market_order', description };
           } catch (e) {
             console.error('[build_market_order] error:', e);
             return { error: String(e) };

@@ -166,16 +166,14 @@ export async function buildMarketOrder(
   buying: StellarAsset,
   sendAmount: string,
   slippagePercent: number,
+  destMinOverride?: string,
 ): Promise<string> {
   const server = horizon();
   const account = await server.loadAccount(accountId);
   const network = getNetwork();
 
-  // destMin = 0 with slippage applied means we accept any amount with slippage tolerance
-  // For a true market order, use a very small destMin based on slippage
   const slippageFactor = 1 - slippagePercent / 100;
-  // We'll use pathPaymentStrictSend — destMin can be "0.0000001" as minimum
-  const destMin = (0.0000001 * slippageFactor).toFixed(7);
+  const destMin = destMinOverride ?? (0.0000001 * slippageFactor).toFixed(7);
 
   const tx = new StellarSdk.TransactionBuilder(account, {
     fee: BASE_FEE,
@@ -188,6 +186,42 @@ export async function buildMarketOrder(
         destination: accountId,
         destAsset: toSdkAsset(buying),
         destMin,
+        path: [],
+      }),
+    )
+    .setTimeout(TIMEBOUND_SECONDS)
+    .build();
+
+  return tx.toXDR();
+}
+
+/**
+ * Build a strict-receive path payment.
+ * Sends at most `sendMax` of `selling` to receive EXACTLY `destAmount` of `buying`.
+ * Use for "buy X of asset" flows where the user specifies what they want to receive.
+ */
+export async function buildStrictReceiveOrder(
+  accountId: string,
+  selling: StellarAsset,
+  buying: StellarAsset,
+  destAmount: string,
+  sendMax: string,
+): Promise<string> {
+  const server = horizon();
+  const account = await server.loadAccount(accountId);
+  const network = getNetwork();
+
+  const tx = new StellarSdk.TransactionBuilder(account, {
+    fee: BASE_FEE,
+    networkPassphrase: network.networkPassphrase,
+  })
+    .addOperation(
+      StellarSdk.Operation.pathPaymentStrictReceive({
+        sendAsset: toSdkAsset(selling),
+        sendMax,
+        destination: accountId,
+        destAsset: toSdkAsset(buying),
+        destAmount,
         path: [],
       }),
     )

@@ -12,6 +12,7 @@
 import {
   buildLimitOrder,
   buildMarketOrder,
+  buildStrictReceiveOrder,
   buildCancelOrder,
   signAndSubmitTransaction,
 } from '@/services/sdex.service';
@@ -37,6 +38,7 @@ export interface BuildMarketOrderParams {
   quoteAsset: StellarAsset;
   amount: string;
   slippagePercent?: number;
+  destMin?: string;
 }
 
 export interface BuildCancelOfferParams {
@@ -83,12 +85,12 @@ export async function buildLimitOrderXdr(
 export async function buildMarketOrderXdr(
   params: BuildMarketOrderParams,
 ): Promise<UnsignedTx> {
-  const { accountId, side, baseAsset, quoteAsset, amount, slippagePercent = 0.5 } = params;
+  const { accountId, side, baseAsset, quoteAsset, amount, slippagePercent = 0.5, destMin } = params;
 
   const selling = side === 'buy' ? quoteAsset : baseAsset;
   const buying  = side === 'buy' ? baseAsset  : quoteAsset;
 
-  const xdr = await buildMarketOrder(accountId, selling, buying, amount, slippagePercent);
+  const xdr = await buildMarketOrder(accountId, selling, buying, amount, slippagePercent, destMin);
   return { xdr, networkPassphrase: getNetwork().networkPassphrase };
 }
 
@@ -125,6 +127,7 @@ export async function buildMarketOrderXdrBySymbol(params: {
   side: 'buy' | 'sell';
   amount: string;
   slippagePercent?: number;
+  destMin?: string;
 }): Promise<UnsignedTx> {
   const pair = getAssetPair(params.pairSymbol);
   if (!pair) throw new Error(`Unknown pair: ${params.pairSymbol}`);
@@ -133,6 +136,30 @@ export async function buildMarketOrderXdrBySymbol(params: {
     baseAsset: pair[0],
     quoteAsset: pair[1],
   });
+}
+
+/**
+ * Build a strict-receive buy order: receive EXACTLY `destAmount` of base asset,
+ * pay at most `sendMax` of quote asset. Use for agent buy-market orders so the
+ * user gets the exact amount they asked for instead of a near-zero fill.
+ */
+export async function buildBuyMarketOrderXdrBySymbol(params: {
+  accountId: string;
+  pairSymbol: string;
+  destAmount: string;
+  sendMax: string;
+}): Promise<UnsignedTx> {
+  const pair = getAssetPair(params.pairSymbol);
+  if (!pair) throw new Error(`Unknown pair: ${params.pairSymbol}`);
+  const [baseAsset, quoteAsset] = pair;
+  const xdr = await buildStrictReceiveOrder(
+    params.accountId,
+    quoteAsset,   // selling (USDC)
+    baseAsset,    // buying  (XLM)
+    params.destAmount,
+    params.sendMax,
+  );
+  return { xdr, networkPassphrase: getNetwork().networkPassphrase };
 }
 
 // ── Full sign+submit actions (used by UI with Freighter) ───────────────
