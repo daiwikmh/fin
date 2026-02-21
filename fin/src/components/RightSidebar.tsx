@@ -5,11 +5,13 @@ import { Wallet, ChevronLeft, ChevronRight, Copy, Check, Loader2, X, ArrowDown }
 import { useWallet } from '@/utils/wallet';
 import type { OrderBook, TransactionResult } from '@/types/sdex.types';
 import { storeBridgeToken, registerAccountWithBridge } from '@/utils/bridge';
+import HelperChat from '@/components/HelperChat';
 
 const BRIDGE_URL = process.env.NEXT_PUBLIC_AGENT_BRIDGE_URL || 'http://localhost:8090';
 
 type ConnectionState = 'disconnected' | 'generating' | 'token_ready' | 'connected';
 type SidebarTab = 'trade' | 'agent';
+type AgentMode = 'helper' | 'openclaw';
 type TradeSide = 'buy' | 'sell';
 
 interface LogEntry {
@@ -56,6 +58,7 @@ export default function RightSidebar({
   const { isConnected, address } = useWallet();
 
   const [activeTab, setActiveTab] = useState<SidebarTab>('trade');
+  const [agentMode, setAgentMode] = useState<AgentMode>('helper');
 
   // Trade state
   const [tradeSide, setTradeSide] = useState<TradeSide>('buy');
@@ -412,116 +415,150 @@ Start by calling GET ${BRIDGE_URL}/api/context?token=${token} to see the user's 
 
         {/* ── AGENT TAB ── */}
         {activeTab === 'agent' && (
-          <>
-            {connState === 'disconnected' && (
-              <div className="portfolio-content">
-                <div className="portfolio-cta">
-                  <div className="portfolio-icon-wrapper">
-                    <div className="portfolio-icon-bg">
-                      <div className="portfolio-icon-gradient"></div>
-                      <div className="portfolio-icon">
-                        <Wallet className="w-12 h-12" />
-                      </div>
-                    </div>
-                  </div>
-                  <h4 className="portfolio-title">Connect OpenClaw</h4>
-                  <p className="portfolio-description">
-                    Connect your Openclaw to start your agentic journey
-                  </p>
-                  <button className="connect-wallet-btn" onClick={handleConnect}>
-                    Connect Openclaw
-                  </button>
-                </div>
+          <div style={{ display: 'flex', flexDirection: 'column', height: '100%', overflow: 'hidden' }}>
+
+            {/* Sub-toggle: Helper / OpenClaw */}
+            <div style={{ padding: '6px 12px', borderBottom: '1px solid #1a1a1a', flexShrink: 0 }}>
+              <div className="tt-tabs">
+                <button
+                  className={`tt-tab ${agentMode === 'helper' ? 'active' : ''}`}
+                  onClick={() => setAgentMode('helper')}
+                >
+                  Helper
+                </button>
+                <button
+                  className={`tt-tab ${agentMode === 'openclaw' ? 'active' : ''}`}
+                  onClick={() => setAgentMode('openclaw')}
+                >
+                  OpenClaw
+                </button>
+              </div>
+            </div>
+
+            {/* ── Helper: AI chat assistant ── */}
+            {agentMode === 'helper' && (
+              <div style={{ flex: 1, minHeight: 0, overflow: 'hidden' }}>
+                <HelperChat
+                  selectedPair={selectedPair || 'XLM/USDC'}
+                  network={network || 'TESTNET'}
+                />
               </div>
             )}
 
-            {connState === 'generating' && (
-              <div className="portfolio-content">
-                <div className="portfolio-cta">
-                  <div className="portfolio-icon-wrapper">
-                    <div className="portfolio-icon-bg">
-                      <div className="portfolio-icon-gradient"></div>
-                      <div className="portfolio-icon">
-                        <Wallet className="w-12 h-12" />
+            {/* ── OpenClaw: bridge terminal (unchanged) ── */}
+            {agentMode === 'openclaw' && (
+              <div style={{ flex: 1, minHeight: 0, overflowY: 'auto' }}>
+                {connState === 'disconnected' && (
+                  <div className="portfolio-content">
+                    <div className="portfolio-cta">
+                      <div className="portfolio-icon-wrapper">
+                        <div className="portfolio-icon-bg">
+                          <div className="portfolio-icon-gradient"></div>
+                          <div className="portfolio-icon">
+                            <Wallet className="w-12 h-12" />
+                          </div>
+                        </div>
                       </div>
+                      <h4 className="portfolio-title">Connect OpenClaw</h4>
+                      <p className="portfolio-description">
+                        Connect your Openclaw to start your agentic journey
+                      </p>
+                      <button className="connect-wallet-btn" onClick={handleConnect}>
+                        Connect Openclaw
+                      </button>
                     </div>
-                  </div>
-                  <button className="connect-wallet-btn" disabled>
-                    Generating...
-                  </button>
-                </div>
-              </div>
-            )}
-
-            {(connState === 'token_ready' || connState === 'connected') && (
-              <div className="agent-panel">
-                {connState === 'token_ready' && (
-                  <>
-                    <div className="agent-token-display">
-                      <span className="agent-token-label">Your token:</span>
-                      <div className="agent-token-row">
-                        <code className="agent-token-value">{token}</code>
-                        <button className="agent-token-copy-btn" onClick={handleCopy}>
-                          {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                      <span className="agent-token-hint">Copy the prompt below and paste it to your OpenClaw bot</span>
-                    </div>
-
-                    <div className="agent-config-snippet">
-                      <div className="agent-config-header">
-                        <span className="agent-config-label">Send to OpenClaw</span>
-                        <button className="agent-token-copy-btn" onClick={handleCopyConfig}>
-                          {configCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
-                        </button>
-                      </div>
-                      <pre className="agent-config-code">{getAgentPrompt()}</pre>
-                    </div>
-                  </>
-                )}
-
-                {connState === 'connected' && (
-                  <div className="agent-token-display">
-                    <div className="agent-token-row">
-                      <span className="agent-terminal-dot live" />
-                      <span className="agent-token-label" style={{ color: '#00ff94' }}>Agent Connected</span>
-                    </div>
-                    <span className="agent-token-hint">OpenClaw is actively using your trading endpoints</span>
                   </div>
                 )}
 
-                <div className="agent-terminal">
-                  <div className="agent-terminal-header">
-                    <span className="agent-terminal-title">Agent Logs</span>
-                    <span className={`agent-terminal-dot ${connState === 'connected' ? 'live' : ''}`} />
+                {connState === 'generating' && (
+                  <div className="portfolio-content">
+                    <div className="portfolio-cta">
+                      <div className="portfolio-icon-wrapper">
+                        <div className="portfolio-icon-bg">
+                          <div className="portfolio-icon-gradient"></div>
+                          <div className="portfolio-icon">
+                            <Wallet className="w-12 h-12" />
+                          </div>
+                        </div>
+                      </div>
+                      <button className="connect-wallet-btn" disabled>
+                        Generating...
+                      </button>
+                    </div>
                   </div>
-                  <div className="agent-terminal-body">
-                    {logs.length === 0 && (
-                      <div className="agent-terminal-empty">Waiting for agent logs...</div>
+                )}
+
+                {(connState === 'token_ready' || connState === 'connected') && (
+                  <div className="agent-panel">
+                    {connState === 'token_ready' && (
+                      <>
+                        <div className="agent-token-display">
+                          <span className="agent-token-label">Your token:</span>
+                          <div className="agent-token-row">
+                            <code className="agent-token-value">{token}</code>
+                            <button className="agent-token-copy-btn" onClick={handleCopy}>
+                              {copied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+                          <span className="agent-token-hint">Copy the prompt below and paste it to your OpenClaw bot</span>
+                        </div>
+
+                        <div className="agent-config-snippet">
+                          <div className="agent-config-header">
+                            <span className="agent-config-label">Send to OpenClaw</span>
+                            <button className="agent-token-copy-btn" onClick={handleCopyConfig}>
+                              {configCopied ? <Check className="w-3.5 h-3.5" /> : <Copy className="w-3.5 h-3.5" />}
+                            </button>
+                          </div>
+                          <pre className="agent-config-code">{getAgentPrompt()}</pre>
+                        </div>
+                      </>
                     )}
-                    {logs.map((entry, i) => (
-                      <div className="agent-log-entry" key={i}>
-                        <span className="agent-log-time">{formatTime(entry.timestamp)}</span>
-                        <span
-                          className="agent-log-msg"
-                          style={
-                            entry.event_type === 'insight'
-                              ? { color: '#facc15' }
-                              : entry.event_type === 'context_update'
-                              ? { color: '#00ff94' }
-                              : undefined
-                          }
-                        >
-                          {entry.message}
-                        </span>
+
+                    {connState === 'connected' && (
+                      <div className="agent-token-display">
+                        <div className="agent-token-row">
+                          <span className="agent-terminal-dot live" />
+                          <span className="agent-token-label" style={{ color: '#00ff94' }}>Agent Connected</span>
+                        </div>
+                        <span className="agent-token-hint">OpenClaw is actively using your trading endpoints</span>
                       </div>
-                    ))}
-                    <div ref={logsEndRef} />
+                    )}
+
+                    <div className="agent-terminal">
+                      <div className="agent-terminal-header">
+                        <span className="agent-terminal-title">Agent Logs</span>
+                        <span className={`agent-terminal-dot ${connState === 'connected' ? 'live' : ''}`} />
+                      </div>
+                      <div className="agent-terminal-body">
+                        {logs.length === 0 && (
+                          <div className="agent-terminal-empty">Waiting for agent logs...</div>
+                        )}
+                        {logs.map((entry, i) => (
+                          <div className="agent-log-entry" key={i}>
+                            <span className="agent-log-time">{formatTime(entry.timestamp)}</span>
+                            <span
+                              className="agent-log-msg"
+                              style={
+                                entry.event_type === 'insight'
+                                  ? { color: '#facc15' }
+                                  : entry.event_type === 'context_update'
+                                  ? { color: '#00ff94' }
+                                  : undefined
+                              }
+                            >
+                              {entry.message}
+                            </span>
+                          </div>
+                        ))}
+                        <div ref={logsEndRef} />
+                      </div>
+                    </div>
                   </div>
-                </div>
+                )}
               </div>
             )}
-          </>
+          </div>
         )}
       </div>
     </>
