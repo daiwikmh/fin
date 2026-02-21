@@ -1,7 +1,7 @@
 'use client';
 
 import { useChat } from '@ai-sdk/react';
-import { DefaultChatTransport, type UIMessage } from 'ai';
+import { DefaultChatTransport, isToolUIPart, type UIMessage } from 'ai';
 import { useRef, useEffect, useState, useMemo } from 'react';
 import { Send, Loader2, CheckCircle, XCircle } from 'lucide-react';
 import { useWallet } from '@/utils/wallet';
@@ -30,7 +30,7 @@ function SignCard({ xdr, networkPassphrase, description, signFn }: SignCardProps
       const res = await fetch('/api/agent/tx/submit', {
         method: 'POST',
         headers: { 'Content-Type': 'application/json' },
-        body: JSON.stringify({ signedXdr: signed }),
+        body: JSON.stringify({ signedXdr: signed, networkPassphrase }),
       });
       const data = await res.json();
       if (data.success) {
@@ -174,7 +174,7 @@ export default function HelperChat({ selectedPair, network }: HelperChatProps) {
     bottomRef.current?.scrollIntoView({ behavior: 'smooth' });
   }, [messages]);
 
-  const onSubmit = (e: React.FormEvent) => {
+  const onSubmit = (e: { preventDefault(): void }) => {
     e.preventDefault();
     if (!input.trim() || isLoading) return;
     sendMessage({ text: input });
@@ -228,8 +228,14 @@ export default function HelperChat({ selectedPair, network }: HelperChatProps) {
                 ) : null;
               }
 
-              if (part.type === 'dynamic-tool') {
-                if (part.state === 'input-streaming' || part.state === 'input-available') {
+              if (isToolUIPart(part)) {
+                // part.type is 'tool-{name}' for inline tools — extract the name
+                const toolName = part.type.startsWith('tool-')
+                  ? part.type.slice(5)
+                  : (part as { toolName?: string }).toolName ?? '';
+                const tp = part as { state: string; output?: unknown; errorText?: string };
+
+                if (tp.state === 'input-streaming' || tp.state === 'input-available') {
                   return (
                     <span
                       key={pi}
@@ -242,12 +248,30 @@ export default function HelperChat({ selectedPair, network }: HelperChatProps) {
                       }}
                     >
                       <Loader2 size={10} className="animate-spin" />
-                      {TOOL_LABELS[part.toolName] ?? 'Processing'}…
+                      {TOOL_LABELS[toolName] ?? 'Processing'}…
                     </span>
                   );
                 }
-                if (part.state === 'output-available') {
-                  const r = part.output as { xdr?: string; networkPassphrase?: string; description?: string } | null;
+                if (tp.state === 'output-error') {
+                  return (
+                    <div
+                      key={pi}
+                      style={{
+                        fontSize: '12px',
+                        color: '#ff6b6b',
+                        padding: '6px 10px',
+                        background: 'rgba(255,107,107,0.08)',
+                        border: '1px solid rgba(255,107,107,0.2)',
+                        borderRadius: '8px',
+                        maxWidth: '88%',
+                      }}
+                    >
+                      {tp.errorText ?? 'Tool error'}
+                    </div>
+                  );
+                }
+                if (tp.state === 'output-available') {
+                  const r = tp.output as { xdr?: string; networkPassphrase?: string; description?: string; error?: string } | null;
                   if (r?.xdr && r.networkPassphrase && r.description) {
                     return (
                       <SignCard
@@ -257,6 +281,24 @@ export default function HelperChat({ selectedPair, network }: HelperChatProps) {
                         description={r.description}
                         signFn={signTransaction}
                       />
+                    );
+                  }
+                  if (r?.error) {
+                    return (
+                      <div
+                        key={pi}
+                        style={{
+                          fontSize: '12px',
+                          color: '#ff6b6b',
+                          padding: '6px 10px',
+                          background: 'rgba(255,107,107,0.08)',
+                          border: '1px solid rgba(255,107,107,0.2)',
+                          borderRadius: '8px',
+                          maxWidth: '88%',
+                        }}
+                      >
+                        {r.error}
+                      </div>
                     );
                   }
                 }
@@ -306,7 +348,7 @@ export default function HelperChat({ selectedPair, network }: HelperChatProps) {
           onKeyDown={(e) => {
             if (e.key === 'Enter' && !e.shiftKey) {
               e.preventDefault();
-              onSubmit(e as unknown as React.FormEvent);
+              onSubmit(e);
             }
           }}
           style={{

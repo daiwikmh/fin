@@ -45,10 +45,10 @@ Current context:
 
 Rules:
 1. You NEVER move funds yourself. You build unsigned XDR transactions.
-2. Always explain simply before building an order.
-3. If wallet is disconnected, ask user to connect.
+2. When the user asks to buy or sell or place any order, you MUST immediately call the correct build tool (build_limit_order or build_market_order). Do NOT just describe or promise to do it. Call the tool first, then write a short explanation after.
+3. If wallet is disconnected, ask user to connect before calling any build tool.
 4. Keep replies short and beginner-friendly.
-5. When building an order, mention a preview card will appear.
+5. After the tool runs, tell the user to review and sign the preview card that appeared.
 `;
   // Convert v6 UIMessages → CoreMessages (the chat-completions "messages" array)
   const coreMessages = await convertToModelMessages(messages ?? []);
@@ -69,6 +69,14 @@ Rules:
     system,
     messages: coreMessages,
     stopWhen: stepCountIs(5),
+    onStepFinish: ({ stepNumber, toolCalls, toolResults, text }) => {
+      console.log('[chat/step]', { stepNumber, toolCallCount: toolCalls?.length, text: text?.slice(0, 80) });
+      toolCalls?.forEach(tc => console.log('  tool call:', tc.toolName, JSON.stringify(tc.input)));
+      toolResults?.forEach(tr => {
+        const r = tr.output as Record<string, unknown>;
+        console.log('  tool result:', tr.toolName, r?.error ? `ERROR: ${r.error}` : `xdr=${!!(r?.xdr)}, desc=${r?.description}`);
+      });
+    },
     tools: {
       get_price: {
         description: 'Get the current mid-price for a trading pair.',
@@ -222,7 +230,11 @@ Rules:
           slippage: z.number().min(0.1).max(5).default(0.5).describe('Slippage tolerance %'),
         }),
         execute: async ({ symbol, side, amount, slippage }: { symbol: string; side: 'buy' | 'sell'; amount: string; slippage: number }) => {
-          if (!walletAddress) return { error: 'Wallet not connected' };
+          console.log('[build_market_order] called', { symbol, side, amount, slippage, walletAddress, netId });
+          if (!walletAddress) {
+            console.log('[build_market_order] no wallet');
+            return { error: 'Wallet not connected' };
+          }
           try {
             const result = await buildMarketOrderXdrBySymbol({
               accountId: walletAddress,
@@ -232,12 +244,15 @@ Rules:
               slippagePercent: slippage,
             });
             const [base] = symbol.split('/');
-            return {
+            const out = {
               ...result,
               action: 'market_order',
               description: `Market ${side === 'buy' ? 'buy' : 'sell'} ${amount} ${base} (${slippage}% slippage)`,
             };
+            console.log('[build_market_order] success, xdr length:', out.xdr?.length, 'passphrase:', out.networkPassphrase);
+            return out;
           } catch (e) {
+            console.error('[build_market_order] error:', e);
             return { error: String(e) };
           }
         },

@@ -1,11 +1,11 @@
 import { NextRequest, NextResponse } from 'next/server';
 import * as StellarSdk from 'stellar-sdk';
-import { getNetwork } from '@/configs/assets';
+import { NETWORKS } from '@/configs/assets';
 
 export async function POST(req: NextRequest) {
   try {
     const body = await req.json();
-    const { signedXdr } = body;
+    const { signedXdr, networkPassphrase } = body;
 
     if (!signedXdr) {
       return NextResponse.json(
@@ -14,7 +14,12 @@ export async function POST(req: NextRequest) {
       );
     }
 
-    const network = getNetwork();
+    // Resolve network config from the passphrase sent by the client.
+    // Fallback to TESTNET so legacy callers without networkPassphrase still work.
+    const network =
+      Object.values(NETWORKS).find((n) => n.networkPassphrase === networkPassphrase) ??
+      NETWORKS.TESTNET;
+
     const tx = StellarSdk.TransactionBuilder.fromXDR(
       signedXdr,
       network.networkPassphrase,
