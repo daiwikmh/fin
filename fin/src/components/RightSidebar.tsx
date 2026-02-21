@@ -4,6 +4,7 @@ import { useState, useRef, useEffect, useCallback } from 'react';
 import { Wallet, ChevronLeft, ChevronRight, Copy, Check, Loader2, X, ArrowDown } from 'lucide-react';
 import { useWallet } from '@/utils/wallet';
 import type { OrderBook, TransactionResult } from '@/types/sdex.types';
+import { storeBridgeToken, registerAccountWithBridge } from '@/utils/bridge';
 
 const BRIDGE_URL = process.env.NEXT_PUBLIC_AGENT_BRIDGE_URL || 'http://localhost:8090';
 
@@ -15,6 +16,7 @@ interface LogEntry {
   message: string;
   source: string;
   timestamp: string;
+  event_type?: string;
 }
 
 interface RightSidebarProps {
@@ -25,6 +27,8 @@ interface RightSidebarProps {
   orderBook: OrderBook | null;
   isSubmitting: boolean;
   lastResult: TransactionResult | null;
+  selectedPair?: string;
+  network?: string;
   onPlaceOrder: (side: 'buy' | 'sell', amount: string, price: string) => Promise<TransactionResult>;
   onMarketOrder: (side: 'buy' | 'sell', amount: string, slippage: number) => Promise<TransactionResult>;
   onClearResult: () => void;
@@ -46,9 +50,10 @@ export default function RightSidebar({
   isVisible, onToggle,
   baseToken, quoteToken,
   orderBook, isSubmitting, lastResult,
+  selectedPair, network,
   onPlaceOrder, onMarketOrder, onClearResult,
 }: RightSidebarProps) {
-  const { isConnected } = useWallet();
+  const { isConnected, address } = useWallet();
 
   const [activeTab, setActiveTab] = useState<SidebarTab>('trade');
 
@@ -110,6 +115,13 @@ export default function RightSidebar({
     }
   };
 
+  // Register account with bridge whenever wallet connects and we have a token.
+  useEffect(() => {
+    if (token && address && network) {
+      registerAccountWithBridge(token, address, network);
+    }
+  }, [token, address, network]);
+
   // Agent handlers
   const handleConnect = useCallback(async () => {
     setConnState('generating');
@@ -119,11 +131,13 @@ export default function RightSidebar({
       const data = await res.json();
       const newToken = data.token;
       setToken(newToken);
+      storeBridgeToken(newToken); // persist for cross-component bridge sync
       setConnState('token_ready');
 
       const es = new EventSource(`${BRIDGE_URL}/api/logs/stream?token=${newToken}`);
       eventSourceRef.current = es;
 
+      // Default "message" event — regular agent logs.
       es.onmessage = (event) => {
         try {
           const entry: LogEntry = JSON.parse(event.data);
@@ -133,6 +147,22 @@ export default function RightSidebar({
           }
         } catch { /* ignore parse errors */ }
       };
+
+      // Named "insight" events — market signals from order book heartbeat.
+      es.addEventListener('insight', (event) => {
+        try {
+          const entry: LogEntry = JSON.parse((event as MessageEvent).data);
+          setLogs((prev) => [...prev, { ...entry, event_type: 'insight' }]);
+        } catch { /* ignore */ }
+      });
+
+      // Named "context_update" events — new account transactions detected.
+      es.addEventListener('context_update', (event) => {
+        try {
+          const entry: LogEntry = JSON.parse((event as MessageEvent).data);
+          setLogs((prev) => [...prev, { ...entry, event_type: 'context_update' }]);
+        } catch { /* ignore */ }
+      });
 
       es.onerror = () => { /* auto-reconnect */ };
     } catch {
@@ -149,7 +179,11 @@ export default function RightSidebar({
 **Step 1 — Discover available skills:**
 GET ${BRIDGE_URL}/api/skills?token=${token}
 
-**Step 2 — Use skills by calling the returned paths.**
+**Step 2 — Check what the user is currently viewing:**
+GET ${BRIDGE_URL}/api/context?token=${token}
+Returns: { network, account_id, active_pair, recent_trades, open_offers }
+
+**Step 3 — Use skills by calling the returned paths.**
 
 READ endpoints (GET, pass params as query string):
 - /api/bridge/pairs — list trading pairs
@@ -166,9 +200,10 @@ WRITE endpoints (POST, JSON body, return unsigned XDR):
 - /api/bridge/trustline/build — body: { account, asset }
 - /api/bridge/tx/submit — body: { signedXdr } (submit signed transaction)
 
+**Network:** Add header \`X-Stellar-Network: MAINNET\` or \`X-Stellar-Network: TESTNET\` to switch networks.
 **Write flow:** call build endpoint → get { xdr, networkPassphrase } → sign XDR → POST to /api/bridge/tx/submit with { signedXdr }.
 
-Start by calling GET ${BRIDGE_URL}/api/bridge/pairs to see what's available, then confirm you're connected.`;
+Start by calling GET ${BRIDGE_URL}/api/context?token=${token} to see the user's current view, then confirm you're connected.`;
   }, [token]);
 
   const handleCopy = useCallback(() => {
@@ -467,7 +502,18 @@ Start by calling GET ${BRIDGE_URL}/api/bridge/pairs to see what's available, the
                     {logs.map((entry, i) => (
                       <div className="agent-log-entry" key={i}>
                         <span className="agent-log-time">{formatTime(entry.timestamp)}</span>
-                        <span className="agent-log-msg">{entry.message}</span>
+                        <span
+                          className="agent-log-msg"
+                          style={
+                            entry.event_type === 'insight'
+                              ? { color: '#facc15' }
+                              : entry.event_type === 'context_update'
+                              ? { color: '#00ff94' }
+                              : undefined
+                          }
+                        >
+                          {entry.message}
+                        </span>
                       </div>
                     ))}
                     <div ref={logsEndRef} />

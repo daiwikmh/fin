@@ -20,10 +20,16 @@ func (h *ProxyHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	// Strip /api/bridge prefix and proxy to /api/agent on the frontend
+	// Network detection: prefer the explicit X-Stellar-Network header sent
+	// by the agent; fall back to whatever the token's context already stores.
+	if network := r.Header.Get("X-Stellar-Network"); network == "MAINNET" || network == "TESTNET" {
+		h.Store.SetActiveView(token, "", network)
+	}
+
+	// Strip /api/bridge prefix and proxy to /api/agent on the frontend.
 	path := strings.TrimPrefix(r.URL.Path, "/api/bridge")
 
-	// On agent's first request, notify the frontend via SSE
+	// On agent's first request, notify the frontend via SSE.
 	if h.Store.MarkAgentConnected(token) {
 		h.Store.Publish(token, store.LogEntry{
 			Message: "Agent connected and ready",
@@ -31,7 +37,7 @@ func (h *ProxyHandler) Handle(w http.ResponseWriter, r *http.Request) {
 		})
 	}
 
-	// Log every agent request to the frontend terminal
+	// Log every agent request to the frontend terminal.
 	h.Store.Publish(token, store.LogEntry{
 		Message: r.Method + " " + path,
 		Source:  "agent",
@@ -49,6 +55,10 @@ func (h *ProxyHandler) Handle(w http.ResponseWriter, r *http.Request) {
 	}
 	proxyReq.Header = r.Header.Clone()
 	proxyReq.Header.Del("X-Agent-Token")
+	// Forward detected network to the frontend for informational use.
+	if snap := h.Store.GetContextSnapshot(token); snap != nil && snap.Network != "" {
+		proxyReq.Header.Set("X-Stellar-Network", snap.Network)
+	}
 
 	resp, err := http.DefaultClient.Do(proxyReq)
 	if err != nil {

@@ -8,6 +8,7 @@ import type { OrderBook, OpenOffer, Trade, TransactionResult, StellarAsset } fro
 import { getOrderBook } from '@/actions/orderbook';
 import { getOpenOffers, getTradeHistory } from '@/actions/account';
 import { placeLimitOrder, placeMarketOrder, cancelOffer } from '@/actions/trade';
+import { syncViewToBridge } from '@/utils/bridge';
 
 interface UseSdexReturn {
   orderBook: OrderBook | null;
@@ -55,6 +56,12 @@ export function useSdex(): UseSdexReturn {
       setOrderBook(null);
     }
   }, [network]); // eslint-disable-line react-hooks/exhaustive-deps
+
+  // Keep the bridge context in sync with the active pair and network so the
+  // AI agent always knows what the user is currently looking at.
+  useEffect(() => {
+    syncViewToBridge(selectedPair, network);
+  }, [selectedPair, network]);
 
   useEffect(() => {
     const pair = getAssetPair(selectedPair);

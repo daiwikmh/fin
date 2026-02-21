@@ -2,11 +2,14 @@
 
 import { ChevronDown, Wallet } from 'lucide-react';
 import { useEffect, useState } from 'react';
+import { usePathname, useRouter } from 'next/navigation';
 import { initWalletKit, useWallet } from '@/utils/wallet';
 
 export default function Header() {
   const { address, isConnecting, isConnected, network, connectWallet, disconnectWallet, changeNetwork, formatAddress } = useWallet();
   const [showNetworkDropdown, setShowNetworkDropdown] = useState(false);
+  const pathname = usePathname();
+  const router = useRouter();
 
   useEffect(() => {
     initWalletKit();
@@ -32,11 +35,26 @@ export default function Header() {
       <div className="header-container">
         {/* Logo + compact nav */}
         <div className="flex items-center gap-3">
-          <div className="header-logo">Arena</div>
+          <div className="header-logo" style={{ cursor: 'pointer' }} onClick={() => router.push('/terminal')}>STOX</div>
           <nav className="header-nav">
-            <button className="header-nav-item">Swap</button>
-            <button className="header-nav-item active">Pro</button>
-            <button className="header-nav-item">Portfolio</button>
+            <button
+              className={`header-nav-item ${pathname === '/terminal' ? 'active' : ''}`}
+              onClick={() => router.push('/terminal')}
+            >
+              Terminal
+            </button>
+            <button
+              className={`header-nav-item ${pathname === '/pro' ? 'active' : ''}`}
+              onClick={() => router.push('/pro')}
+            >
+              Pro
+            </button>
+            <button
+              className={`header-nav-item ${pathname === '/portfolio' ? 'active' : ''}`}
+              onClick={() => router.push('/portfolio')}
+            >
+              Portfolio
+            </button>
           </nav>
         </div>
 

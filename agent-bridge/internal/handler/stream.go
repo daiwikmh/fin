@@ -41,7 +41,7 @@ func (h *StreamHandler) Stream(w http.ResponseWriter, r *http.Request) {
 	}
 	defer h.Store.Unsubscribe(token, ch)
 
-	// Send connected event
+	// Send connected event.
 	fmt.Fprintf(w, "event: connected\ndata: {\"status\":\"connected\"}\n\n")
 	flusher.Flush()
 
@@ -58,7 +58,16 @@ func (h *StreamHandler) Stream(w http.ResponseWriter, r *http.Request) {
 			if err != nil {
 				continue
 			}
-			fmt.Fprintf(w, "data: %s\n\n", data)
+
+			// Named SSE events for insight and context_update so the frontend
+			// can add dedicated addEventListener() handlers. Regular logs use
+			// the default "message" event (caught by onmessage).
+			switch entry.EventType {
+			case "insight", "context_update":
+				fmt.Fprintf(w, "event: %s\ndata: %s\n\n", entry.EventType, data)
+			default:
+				fmt.Fprintf(w, "data: %s\n\n", data)
+			}
 			flusher.Flush()
 		}
 	}
