@@ -6,6 +6,7 @@ import LeftSidebar from '@/components/LeftSidebar';
 import ChartSection from '@/components/ChartSection';
 import TradingTerminal from '@/components/TradingTerminal';
 import ContractController from '@/components/ContractController';
+import UserVault from '@/components/UserVault';
 import { useSdex } from '@/hooks/useSdex';
 
 export default function ProPage() {
@@ -50,9 +51,10 @@ export default function ProPage() {
           </div>
         </div>
 
-        {/* Right panel — Contract Controller */}
+        {/* Right panel — Admin controller + User vault */}
         <div className="pro-cc-panel">
           <ContractController />
+          <UserVault />
         </div>
       </div>
     </div>

@@ -40,7 +40,7 @@ export default function ContractController() {
   /* ── Vault state ── */
   const [vUserAddr, setVUserAddr] = useState('');
   const [vPnl, setVPnl] = useState('');
-  const [vToken, setVToken] = useState('GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5');
+  const [vToken, setVToken] = useState('CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA');
   const [vSubmitting, setVSubmitting] = useState(false);
   const [vStatus, setVStatus] = useState<Status>(null);
 
@@ -48,14 +48,14 @@ export default function ContractController() {
   const [lUser, setLUser] = useState('');
   const [lSymbol, setLSymbol] = useState('XLM');
   const [lDebt, setLDebt] = useState('');
-  const [lCollToken, setLCollToken] = useState('GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5');
+  const [lCollToken, setLCollToken] = useState('CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA');
   const [lCollLocked, setLCollLocked] = useState('');
   const [lSubmitting, setLSubmitting] = useState(false);
   const [lStatus, setLStatus] = useState<Status>(null);
 
   /* ── Leverage: close state ── */
   const [cUser, setCUser] = useState('');
-  const [cCollToken, setCCollToken] = useState('GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5');
+  const [cCollToken, setCCollToken] = useState('CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA');
   const [cSubmitting, setCSubmitting] = useState(false);
   const [cStatus, setCStatus] = useState<Status>(null);
 
