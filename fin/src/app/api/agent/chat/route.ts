@@ -13,7 +13,7 @@ import { buildLimitOrderXdrBySymbol, buildMarketOrderXdrBySymbol, buildBuyMarket
 // /chat/completions instead of the Responses API (/responses).
 const openrouter = createOpenAI({
   baseURL: 'https://openrouter.ai/api/v1',
-  apiKey: process.env.OPENROUTER_API_KEY ?? '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',
+  apiKey: process.env.OPENROUTER_API_KEY,
 });
 
 export async function POST(req: NextRequest) {
