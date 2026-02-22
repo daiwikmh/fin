@@ -8,6 +8,7 @@ import (
 	"os"
 	"strings"
 
+	"agent-bridge/internal/db"
 	"agent-bridge/internal/handler"
 	"agent-bridge/internal/matching"
 	"agent-bridge/internal/middleware"
@@ -53,7 +54,20 @@ func loadDotEnv(path string) {
 func main() {
 	loadDotEnv(".env")
 
-	s := store.NewStore()
+	// ── Persistent SQLite store ───────────────────────────────────────────────
+	dbPath := os.Getenv("DB_PATH")
+	if dbPath == "" {
+		dbPath = "bridge.db"
+	}
+	database, err := db.Open(dbPath)
+	if err != nil {
+		fmt.Printf("[db] WARNING: could not open %s: %v — running without persistence\n", dbPath, err)
+	}
+	if database != nil {
+		defer database.Close()
+	}
+
+	s := store.NewStore(database)
 
 	frontendURL := os.Getenv("FRONTEND_URL")
 	if frontendURL == "" {
@@ -147,8 +161,23 @@ func main() {
 		fmt.Println("[sdex] SDEX client initialised")
 	}
 
-	// ── Position store (in-memory, lives for the process lifetime) ────────────
-	posStore := positions.New()
+	// ── Position store (SQLite-backed, survives restarts) ─────────────────────
+	posStore := positions.New(database)
+
+	// ── Re-register persisted positions into the liquidation engine ───────────
+	for _, pos := range posStore.All() {
+		eng.Liquidation.AddPosition(&matching.OpenPosition{
+			UserToken:        pos.UserToken,
+			Symbol:           pos.Symbol,
+			Side:             string(pos.Side),
+			EntryPrice:       pos.EntryPrice,
+			Leverage:         pos.Leverage,
+			CollateralAmount: pos.CollateralUSDC,
+			DebtAmount:       pos.TotalUSDC,
+		})
+		fmt.Printf("[startup] restored liquidation watch: user=%s side=%s entry=%.6f\n",
+			pos.UserAddr, pos.Side, pos.EntryPrice)
+	}
 
 	// ── HTTP handlers ─────────────────────────────────────────────────────────
 	tokenH := &handler.TokenHandler{Store: s}

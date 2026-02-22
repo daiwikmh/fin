@@ -3,8 +3,11 @@ package store
 import (
 	"crypto/rand"
 	"encoding/hex"
+	"log"
 	"sync"
 	"time"
+
+	"agent-bridge/internal/db"
 )
 
 // LogEntry is what gets streamed to SSE subscribers.
@@ -71,12 +74,42 @@ type Connection struct {
 type Store struct {
 	mu          sync.RWMutex
 	connections map[string]*Connection
+	db          *db.DB // nil when running without persistence
 }
 
-func NewStore() *Store {
-	return &Store{
+func NewStore(database *db.DB) *Store {
+	s := &Store{
 		connections: make(map[string]*Connection),
+		db:          database,
 	}
+	if database != nil {
+		s.loadFromDB()
+	}
+	return s
+}
+
+// loadFromDB re-hydrates all persisted sessions into memory on startup.
+func (s *Store) loadFromDB() {
+	sessions, err := s.db.AllSessions()
+	if err != nil {
+		log.Printf("[store] load sessions: %v", err)
+		return
+	}
+	for _, sess := range sessions {
+		conn := &Connection{
+			Token:       sess.Token,
+			CreatedAt:   sess.CreatedAt,
+			AccountID:   sess.AccountID,
+			Network:     sess.Network,
+			subscribers: make(map[chan LogEntry]bool),
+			Context: &UserContext{
+				LastActiveNetwork: sess.Network,
+				ActivePair:        sess.ActivePair,
+			},
+		}
+		s.connections[sess.Token] = conn
+	}
+	log.Printf("[store] restored %d session(s) from db", len(sessions))
 }
 
 func (s *Store) CreateToken() (string, error) {
@@ -98,6 +131,11 @@ func (s *Store) CreateToken() (string, error) {
 			LastActiveNetwork: "TESTNET",
 			ActivePair:        "XLM/USDC",
 		},
+	}
+	if s.db != nil {
+		if err := s.db.InsertSession(token); err != nil {
+			log.Printf("[store] persist session %s: %v", token, err)
+		}
 	}
 	return token, nil
 }
@@ -226,6 +264,11 @@ func (s *Store) SetAccountWatch(token, accountID, network string, cancel func())
 		conn.Context.LastActiveNetwork = network
 	}
 	conn.mu.Unlock()
+	if s.db != nil {
+		if err := s.db.UpdateSessionAccount(token, accountID, network); err != nil {
+			log.Printf("[store] persist account for %s: %v", token, err)
+		}
+	}
 }
 
 // SetActiveView updates the active pair and/or network for a token.
@@ -247,6 +290,11 @@ func (s *Store) SetActiveView(token, pair, network string) {
 		}
 	}
 	conn.mu.Unlock()
+	if s.db != nil {
+		if err := s.db.UpdateSessionPair(token, pair, network); err != nil {
+			log.Printf("[store] persist pair for %s: %v", token, err)
+		}
+	}
 }
 
 // AddRecentTrade prepends a trade to the context (capped at 5).

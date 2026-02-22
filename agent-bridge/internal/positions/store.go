@@ -1,8 +1,13 @@
-// Package positions tracks open leveraged SDEX positions in memory.
-// Each position is keyed by the bridge session token.
+// Package positions tracks open leveraged SDEX positions in memory,
+// with write-through persistence to SQLite so positions survive bridge restarts.
 package positions
 
-import "sync"
+import (
+	"log"
+	"sync"
+
+	"agent-bridge/internal/db"
+)
 
 // Side is "long" or "short".
 type Side string
@@ -43,15 +48,47 @@ func (p *Position) PnL(markPrice float64) float64 {
 	return pct * p.TotalUSDC
 }
 
-// Store is a thread-safe in-memory position registry.
+// Store is a thread-safe in-memory position registry with SQLite write-through.
 type Store struct {
 	mu        sync.RWMutex
 	positions map[string]*Position // userToken → position
+	db        *db.DB               // nil when running without persistence
 }
 
-// New creates an empty Store.
-func New() *Store {
-	return &Store{positions: make(map[string]*Position)}
+// New creates a Store. If database is non-nil, positions are persisted to SQLite
+// and existing rows are loaded into memory immediately.
+func New(database *db.DB) *Store {
+	s := &Store{
+		positions: make(map[string]*Position),
+		db:        database,
+	}
+	if database != nil {
+		s.loadFromDB()
+	}
+	return s
+}
+
+// loadFromDB re-hydrates all persisted positions into memory on startup.
+func (s *Store) loadFromDB() {
+	rows, err := s.db.AllPositions()
+	if err != nil {
+		log.Printf("[positions] load from db: %v", err)
+		return
+	}
+	for _, r := range rows {
+		s.positions[r.Token] = &Position{
+			UserToken:      r.Token,
+			UserAddr:       r.UserAddr,
+			Symbol:         r.Symbol,
+			Side:           Side(r.Side),
+			EntryPrice:     r.EntryPrice,
+			XLMAmount:      r.XLMAmount,
+			TotalUSDC:      r.TotalUSDC,
+			CollateralUSDC: r.CollateralUSDC,
+			Leverage:       r.Leverage,
+		}
+	}
+	log.Printf("[positions] restored %d position(s) from db", len(rows))
 }
 
 // Add stores a new position (overwrites any existing position for the token).
@@ -59,6 +96,22 @@ func (s *Store) Add(p *Position) {
 	s.mu.Lock()
 	s.positions[p.UserToken] = p
 	s.mu.Unlock()
+	if s.db != nil {
+		err := s.db.UpsertPosition(db.PositionRow{
+			Token:          p.UserToken,
+			UserAddr:       p.UserAddr,
+			Symbol:         p.Symbol,
+			Side:           string(p.Side),
+			EntryPrice:     p.EntryPrice,
+			XLMAmount:      p.XLMAmount,
+			TotalUSDC:      p.TotalUSDC,
+			CollateralUSDC: p.CollateralUSDC,
+			Leverage:       p.Leverage,
+		})
+		if err != nil {
+			log.Printf("[positions] persist %s: %v", p.UserToken, err)
+		}
+	}
 }
 
 // Get returns the position for a token, or nil.
@@ -78,6 +131,11 @@ func (s *Store) Remove(userToken string) {
 	s.mu.Lock()
 	delete(s.positions, userToken)
 	s.mu.Unlock()
+	if s.db != nil {
+		if err := s.db.DeletePosition(userToken); err != nil {
+			log.Printf("[positions] delete %s: %v", userToken, err)
+		}
+	}
 }
 
 // All returns a snapshot of all open positions.
