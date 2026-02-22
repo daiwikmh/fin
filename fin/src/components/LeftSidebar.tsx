@@ -47,8 +47,18 @@ export default function LeftSidebar({ isVisible, onToggle, selectedPair, onSelec
               <div className="trading-pair-info">
                 {/* Token Icons */}
                 <div className="trading-pair-icons">
-                  <div className="trading-pair-icon"></div>
-                  <div className="trading-pair-icon"></div>
+                  <img
+                    src={pair.baseLogo}
+                    alt={pair.baseToken}
+                    className="trading-pair-icon"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.background = 'linear-gradient(135deg,#60a5fa,#a78bfa)'; (e.currentTarget as HTMLImageElement).src = ''; }}
+                  />
+                  <img
+                    src={pair.quoteLogo}
+                    alt={pair.quoteToken}
+                    className="trading-pair-icon"
+                    onError={(e) => { (e.currentTarget as HTMLImageElement).style.background = 'linear-gradient(135deg,#34d399,#3b82f6)'; (e.currentTarget as HTMLImageElement).src = ''; }}
+                  />
                 </div>
                 <div className="trading-pair-details">
                   <div className="trading-pair-symbol">{pair.symbol}</div>

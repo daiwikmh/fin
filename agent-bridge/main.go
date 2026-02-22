@@ -9,6 +9,7 @@ import (
 	"agent-bridge/internal/handler"
 	"agent-bridge/internal/matching"
 	"agent-bridge/internal/middleware"
+	"agent-bridge/internal/soroban"
 	"agent-bridge/internal/store"
 	"agent-bridge/internal/watcher"
 )
@@ -21,6 +22,8 @@ func main() {
 		frontendURL = "http://localhost:3000"
 	}
 
+	adminSecret := os.Getenv("ADMIN_SECRET")
+
 	// ── Background context for all long-running goroutines ───────────────────
 	ctx, cancel := context.WithCancel(context.Background())
 	defer cancel()
@@ -29,17 +32,64 @@ func main() {
 	watcher.WatchOrderBooks(ctx, s, "MAINNET")
 	watcher.WatchOrderBooks(ctx, s, "TESTNET")
 
+	// ── Soroban Contract Controller ───────────────────────────────────────────
+	// Holds ADMIN_SECRET and is the only entity authorised to call settle_pnl
+	// and open_synthetic_position on-chain.
+	rpcURL := os.Getenv("SOROBAN_RPC_URL")
+	if rpcURL == "" {
+		rpcURL = "https://soroban-testnet.stellar.org"
+	}
+	horizonURL := os.Getenv("HORIZON_URL")
+	if horizonURL == "" {
+		horizonURL = "https://horizon-testnet.stellar.org"
+	}
+	networkPassphrase := os.Getenv("NETWORK_PASSPHRASE")
+	if networkPassphrase == "" {
+		networkPassphrase = "Test SDF Network ; September 2015"
+	}
+	vaultContractID := os.Getenv("AGENT_VAULT_ID")
+	if vaultContractID == "" {
+		vaultContractID = "CCNK5O3FFCOC5KEBRK6ORUUPPHYDUITTH2XCLLG7P2IBQRX2L6HXJFWG"
+	}
+	poolContractID := os.Getenv("LEVERAGE_POOL_ID")
+	if poolContractID == "" {
+		poolContractID = "CCNF3JMO7MO5PSR7AS4GT3DKZU7MLDN5WS2ML7RWOGMGPLXTT7HXRY7L"
+	}
+	// Default settlement token: USDC on testnet
+	settlementToken := os.Getenv("SETTLEMENT_TOKEN")
+	if settlementToken == "" {
+		settlementToken = "GBBD47IF6LWK7P7MDEVSCWR7DPUWV3NY3DTQEVFL4NAT4AQH3ZLLFLA5"
+	}
+
+	var sorobanClient *soroban.Client
+	if adminSecret != "" {
+		sorobanClient = soroban.New(
+			rpcURL, horizonURL, networkPassphrase,
+			adminSecret, vaultContractID, poolContractID,
+		)
+		fmt.Println("[soroban] contract controller initialised")
+	} else {
+		fmt.Println("[soroban] ADMIN_SECRET not set — on-chain settlement disabled")
+	}
+
 	// ── Matching engine ───────────────────────────────────────────────────────
-	// settleURL is the endpoint that receives liquidation/settlement requests.
-	// It should call AgentVault.settle_pnl with the admin key.
-	// Set SETTLE_URL and ADMIN_SECRET in your environment.
 	settleURL := os.Getenv("SETTLE_URL")
 	if settleURL == "" {
 		settleURL = frontendURL + "/api/admin/settle"
 	}
-	adminSecret := os.Getenv("ADMIN_SECRET")
 
 	eng := matching.NewEngine(settleURL, adminSecret)
+
+	// Wire the soroban client into the liquidation engine so settlements go
+	// directly on-chain without an extra HTTP round-trip.
+	if sorobanClient != nil {
+		token := settlementToken
+		eng.SetSettleFunc(func(bCtx context.Context, userToken, _ string, pnl float64) error {
+			pnlScaled := int64(pnl * float64(soroban.ScaleFactor))
+			return sorobanClient.SettleTrade(bCtx, userToken, pnlScaled, token)
+		})
+	}
+
 	eng.Start(ctx)
 
 	// ── HTTP handlers ─────────────────────────────────────────────────────────
@@ -51,10 +101,11 @@ func main() {
 	ctxH := &handler.ContextHandler{Store: s}
 	ordersH := &handler.OrdersHandler{Engine: eng}
 	pricesH := &handler.PricesHandler{Engine: eng}
+	adminH := &handler.AdminHandler{Soroban: sorobanClient}
 
 	mux := http.NewServeMux()
 
-	// Existing routes
+	// Core routes
 	mux.HandleFunc("/api/token/generate", tokenH.Generate)
 	mux.HandleFunc("/api/logs", logsH.Post)
 	mux.HandleFunc("/api/logs/stream", streamH.Stream)
@@ -63,9 +114,14 @@ func main() {
 	mux.HandleFunc("/api/bridge/", proxyH.Handle)
 
 	// Matching engine routes
-	mux.HandleFunc("/api/orders", ordersH.Handle)    // GET (book snapshot) + POST (place order)
-	mux.HandleFunc("/api/prices", pricesH.Get)        // GET all mark prices
-	mux.HandleFunc("/api/price/update", pricesH.Update) // POST — admin / TradingView webhook
+	mux.HandleFunc("/api/orders", ordersH.Handle)
+	mux.HandleFunc("/api/prices", pricesH.Get)
+	mux.HandleFunc("/api/price/update", pricesH.Update)
+
+	// Admin / Contract Controller routes (Bearer ADMIN_SECRET required)
+	mux.HandleFunc("/api/admin/settle", adminH.Settle)
+	mux.HandleFunc("/api/admin/position", adminH.OpenPosition)
+	mux.HandleFunc("/api/admin/position/close", adminH.ClosePosition)
 
 	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
 	if allowedOrigin == "" {
@@ -77,7 +133,7 @@ func main() {
 	if port == "" {
 		port = "8090"
 	}
-	fmt.Printf("listening on :%s (frontend=%s, settle=%s)\n", port, frontendURL, settleURL)
+	fmt.Printf("listening on :%s (frontend=%s rpc=%s)\n", port, frontendURL, rpcURL)
 	if err := http.ListenAndServe(":"+port, wrapped); err != nil {
 		fmt.Printf("server error: %v\n", err)
 	}

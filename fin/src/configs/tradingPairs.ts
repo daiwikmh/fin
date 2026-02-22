@@ -22,12 +22,32 @@ const XLM_USDC: TradingPair = {
   quoteLogo: '/usdc.png',
 };
 
+const NVDA_USD: TradingPair = {
+  symbol: 'NVDA/USD',
+  baseToken: 'NVDA',
+  quoteToken: 'USD',
+  price: 0,
+  change24h: 0,
+  volume24h: 0,
+  baseLogo: '/image.png',
+  quoteLogo: '/usdc.png',
+};
+
+const AAPL_USD: TradingPair = {
+  symbol: 'AAPL/USD',
+  baseToken: 'AAPL',
+  quoteToken: 'USD',
+  price: 0,
+  change24h: 0,
+  volume24h: 0,
+  baseLogo: '/image.png',
+  quoteLogo: '/usdc.png',
+};
+
 export function getTradingPairs(): TradingPair[] {
-  // Only XLM/USDC is listed on both networks.
-  // The RWA matching engine operates exclusively on this pair.
-  void getCurrentNetworkId(); // keep import live; extend when more pairs are added
-  return [XLM_USDC];
+  void getCurrentNetworkId(); // keep import live
+  return [XLM_USDC, NVDA_USD, AAPL_USD];
 }
 
 // Backward compat — static export used by legacy consumers
-export const tradingPairs: TradingPair[] = [XLM_USDC];
+export const tradingPairs: TradingPair[] = [XLM_USDC, NVDA_USD, AAPL_USD];

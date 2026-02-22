@@ -48,6 +48,13 @@ func NewEngine(settleURL, adminSecret string) *Engine {
 	return e
 }
 
+// SetSettleFunc replaces the default HTTP-based settle call with a direct
+// function, typically the soroban.Client.SettleTrade call.
+// Must be called before Start.
+func (e *Engine) SetSettleFunc(fn SettleFunc) {
+	e.Liquidation.settle = fn
+}
+
 // Start launches background goroutines (price mock, liquidation loop).
 func (e *Engine) Start(ctx context.Context) {
 	go e.Prices.RunMockUpdater(ctx)

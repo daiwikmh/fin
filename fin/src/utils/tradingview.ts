@@ -36,6 +36,8 @@ const TV_SYMBOL_MAP: Record<string, string> = {
   'SRT/USDC': 'BINANCE:XLMUSDC',  // fallback
   'XLM/USDT': 'BINANCE:XLMUSDT',
   'AQUA/XLM': 'BINANCE:XLMUSDC',  // fallback
+  'NVDA/USD': 'NASDAQ:NVDA',
+  'AAPL/USD': 'NASDAQ:AAPL',
 };
 
 export function getTradingViewSymbol(pair: string): string {
