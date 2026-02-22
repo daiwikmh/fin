@@ -1,20 +1,58 @@
 package main
 
 import (
+	"bufio"
 	"context"
 	"fmt"
 	"net/http"
 	"os"
+	"strings"
 
 	"agent-bridge/internal/handler"
 	"agent-bridge/internal/matching"
 	"agent-bridge/internal/middleware"
+	"agent-bridge/internal/positions"
+	"agent-bridge/internal/sdex"
 	"agent-bridge/internal/soroban"
 	"agent-bridge/internal/store"
 	"agent-bridge/internal/watcher"
 )
 
+// loadDotEnv reads a .env file and sets any variable that is not already set
+// in the process environment.  Lines starting with # are ignored.
+func loadDotEnv(path string) {
+	f, err := os.Open(path)
+	if err != nil {
+		return // no .env file — that's fine
+	}
+	defer f.Close()
+
+	scanner := bufio.NewScanner(f)
+	for scanner.Scan() {
+		line := strings.TrimSpace(scanner.Text())
+		if line == "" || strings.HasPrefix(line, "#") {
+			continue
+		}
+		idx := strings.IndexByte(line, '=')
+		if idx < 0 {
+			continue
+		}
+		key := strings.TrimSpace(line[:idx])
+		val := strings.TrimSpace(line[idx+1:])
+		// Strip optional surrounding quotes
+		if len(val) >= 2 && val[0] == '"' && val[len(val)-1] == '"' {
+			val = val[1 : len(val)-1]
+		}
+		// Only set if not already in the environment (so explicit exports win)
+		if os.Getenv(key) == "" {
+			os.Setenv(key, val)
+		}
+	}
+}
+
 func main() {
+	loadDotEnv(".env")
+
 	s := store.NewStore()
 
 	frontendURL := os.Getenv("FRONTEND_URL")
@@ -98,6 +136,20 @@ func main() {
 
 	eng.Start(ctx)
 
+	// ── SDEX client (uses Horizon for real DEX execution) ─────────────────────
+	usdcIssuer := os.Getenv("USDC_ISSUER")
+	if usdcIssuer == "" {
+		usdcIssuer = sdex.USDCIssuerTestnet
+	}
+	var sdexClient *sdex.Client
+	if adminSecret != "" {
+		sdexClient = sdex.New(horizonURL, networkPassphrase, adminSecret, usdcIssuer)
+		fmt.Println("[sdex] SDEX client initialised")
+	}
+
+	// ── Position store (in-memory, lives for the process lifetime) ────────────
+	posStore := positions.New()
+
 	// ── HTTP handlers ─────────────────────────────────────────────────────────
 	tokenH := &handler.TokenHandler{Store: s}
 	logsH := &handler.LogsHandler{Store: s}
@@ -113,6 +165,13 @@ func main() {
 	}
 	pricesH := &handler.PricesHandler{Engine: eng}
 	adminH := &handler.AdminHandler{Soroban: sorobanClient}
+	posH := &handler.PositionsHandler{
+		Store:           s,
+		Positions:       posStore,
+		SDEX:            sdexClient,
+		Soroban:         sorobanClient,
+		SettlementToken: settlementToken,
+	}
 
 	mux := http.NewServeMux()
 
@@ -133,6 +192,11 @@ func main() {
 	mux.HandleFunc("/api/admin/settle", adminH.Settle)
 	mux.HandleFunc("/api/admin/position", adminH.OpenPosition)
 	mux.HandleFunc("/api/admin/position/close", adminH.ClosePosition)
+
+	// SDEX leveraged position routes
+	mux.HandleFunc("/api/positions/open", posH.Open)
+	mux.HandleFunc("/api/positions/close", posH.Close)
+	mux.HandleFunc("/api/positions", posH.Get)
 
 	allowedOrigin := os.Getenv("ALLOWED_ORIGIN")
 	if allowedOrigin == "" {

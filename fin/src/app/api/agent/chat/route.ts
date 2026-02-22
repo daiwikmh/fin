@@ -63,7 +63,7 @@ Rules:
     });
   }
 
-  console.log('[chat/route] →', JSON.stringify({ model: 'deepseek/deepseek-chat-v3-0324', messageCount: coreMessages.length, messages: coreMessages }, null, 2));
+  console.log('[chat/route] →', JSON.stringify({ model: 'deepseek/deepseek-chat-v3-0324', messageCount: coreMessages.length }, null, 2));
 
   const result = streamText({
     model: openrouter.chat('deepseek/deepseek-chat-v3-0324'),
