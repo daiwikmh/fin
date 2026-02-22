@@ -7,23 +7,27 @@ export interface TradingPair {
   price: number;
   change24h: number;
   volume24h: number;
+  baseLogo: string;   // path relative to /public
+  quoteLogo: string;
 }
 
-const PAIRS_TESTNET: TradingPair[] = [
-  { symbol: 'XLM/USDC', baseToken: 'XLM', quoteToken: 'USDC', price: 0, change24h: 0, volume24h: 0 },
-  { symbol: 'SRT/XLM', baseToken: 'SRT', quoteToken: 'XLM', price: 0, change24h: 0, volume24h: 0 },
-  { symbol: 'SRT/USDC', baseToken: 'SRT', quoteToken: 'USDC', price: 0, change24h: 0, volume24h: 0 },
-];
-
-const PAIRS_MAINNET: TradingPair[] = [
-  { symbol: 'XLM/USDC', baseToken: 'XLM', quoteToken: 'USDC', price: 0, change24h: 0, volume24h: 0 },
-  { symbol: 'AQUA/XLM', baseToken: 'AQUA', quoteToken: 'XLM', price: 0, change24h: 0, volume24h: 0 },
-  { symbol: 'AQUA/USDC', baseToken: 'AQUA', quoteToken: 'USDC', price: 0, change24h: 0, volume24h: 0 },
-];
+const XLM_USDC: TradingPair = {
+  symbol: 'XLM/USDC',
+  baseToken: 'XLM',
+  quoteToken: 'USDC',
+  price: 0,
+  change24h: 0,
+  volume24h: 0,
+  baseLogo: '/slogo.svg',
+  quoteLogo: '/usdc.png',
+};
 
 export function getTradingPairs(): TradingPair[] {
-  return getCurrentNetworkId() === 'MAINNET' ? PAIRS_MAINNET : PAIRS_TESTNET;
+  // Only XLM/USDC is listed on both networks.
+  // The RWA matching engine operates exclusively on this pair.
+  void getCurrentNetworkId(); // keep import live; extend when more pairs are added
+  return [XLM_USDC];
 }
 
-// Backward compat — static export defaults to testnet
-export const tradingPairs: TradingPair[] = PAIRS_TESTNET;
+// Backward compat — static export used by legacy consumers
+export const tradingPairs: TradingPair[] = [XLM_USDC];

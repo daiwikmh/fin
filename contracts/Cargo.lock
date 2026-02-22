@@ -1364,15 +1364,6 @@ dependencies = [
 ]
 
 [[package]]
-name = "soroban-poseidon"
-version = "25.0.0"
-source = "registry+https://github.com/rust-lang/crates.io-index"
-checksum = "0f98bca99d10989b95b90455d6a3fbf89f776679845e7a262f43381a35ff26ab"
-dependencies = [
- "soroban-sdk",
-]
-
-[[package]]
 name = "soroban-sdk"
 version = "25.1.1"
 source = "registry+https://github.com/rust-lang/crates.io-index"
@@ -1824,14 +1815,6 @@ dependencies = [
  "proc-macro2",
  "quote",
  "syn 2.0.116",
-]
-
-[[package]]
-name = "zk-auth"
-version = "0.0.0"
-dependencies = [
- "soroban-poseidon",
- "soroban-sdk",
 ]
 
 [[package]]

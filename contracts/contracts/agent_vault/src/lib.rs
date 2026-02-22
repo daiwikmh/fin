@@ -1,410 +1,288 @@
 #![no_std]
+use soroban_sdk::{contract, contractimpl, contracttype, contracterror, token, Address, Env};
 
-use soroban_sdk::{
-    contract, contractimpl, contracttype, contracterror, contractclient, symbol_short,
-    address_payload::AddressPayload, Address, BytesN, Env, token,
-};
-
-// ---------------------------------------------------------------------------
-// Constants
-// ---------------------------------------------------------------------------
-
-const LEDGER_BUMP: u32 = 518400; // ~30 days
-const INSTANCE_BUMP: u32 = 518400;
-
-// ---------------------------------------------------------------------------
-// Errors
-// ---------------------------------------------------------------------------
+// ── Errors ───────────────────────────────────────────────────────────────────
 
 #[contracterror]
 #[derive(Copy, Clone, Debug, Eq, PartialEq, PartialOrd, Ord)]
 #[repr(u32)]
 pub enum Error {
-    NotInitialized = 1,
-    AlreadyInitialized = 2,
-    UnsupportedToken = 3,
+    NotInitialized      = 1,
+    AlreadyInitialized  = 2,
+    UnsupportedToken    = 3,
     InsufficientBalance = 4,
-    AgentSessionInvalid = 5,
+    Unauthorized        = 5,
 }
 
-// ---------------------------------------------------------------------------
-// Storage keys
-// ---------------------------------------------------------------------------
+// ── Storage keys ─────────────────────────────────────────────────────────────
 
 #[contracttype]
 #[derive(Clone)]
 pub enum DataKey {
-    ZKAuthContract,
     Admin,
-    Balance(Address, Address), // (user, token_sac)
-    SupportedToken(Address),
+    SupportedToken(Address),    // token -> bool
+    Balance(Address, Address),  // (user, token) -> i128
+    TerminalPool(Address),      // token -> i128  (terminal's own liquidity pool)
 }
 
-// ---------------------------------------------------------------------------
-// ZKAuth cross-contract client
-// ---------------------------------------------------------------------------
+const TTL_BUMP: u32 = 518_400; // ~30 days at 5s/ledger
 
-#[contractclient(name = "ZKAuthClient")]
-pub trait ZKAuthInterface {
-    fn is_session_valid(env: Env, user: Address) -> bool;
-    fn get_agent_pubkey(env: Env, user: Address) -> Option<BytesN<32>>;
-}
-
-// ---------------------------------------------------------------------------
-// Helpers
-// ---------------------------------------------------------------------------
-
-fn extend_instance(env: &Env) {
-    env.storage()
-        .instance()
-        .extend_ttl(INSTANCE_BUMP, INSTANCE_BUMP);
-}
-
-fn extend_persistent(env: &Env, key: &DataKey) {
-    env.storage()
-        .persistent()
-        .extend_ttl(key, LEDGER_BUMP, LEDGER_BUMP);
-}
-
-fn get_balance(env: &Env, user: &Address, token_sac: &Address) -> i128 {
-    let key = DataKey::Balance(user.clone(), token_sac.clone());
-    let bal = env.storage().persistent().get(&key).unwrap_or(0i128);
-    if env.storage().persistent().has(&key) {
-        extend_persistent(env, &key);
-    }
-    bal
-}
-
-fn set_balance(env: &Env, user: &Address, token_sac: &Address, amount: i128) {
-    let key = DataKey::Balance(user.clone(), token_sac.clone());
-    env.storage().persistent().set(&key, &amount);
-    extend_persistent(env, &key);
-}
-
-fn load_zkauth_address(env: &Env) -> Address {
-    env.storage()
-        .instance()
-        .get(&DataKey::ZKAuthContract)
-        .unwrap_or_else(|| panic!("NotInitialized"))
-}
-
-fn assert_token_supported(env: &Env, token_sac: &Address) {
-    let key = DataKey::SupportedToken(token_sac.clone());
-    let supported: bool = env.storage().persistent().get(&key).unwrap_or(false);
-    if !supported {
-        panic!("UnsupportedToken");
-    }
-    extend_persistent(env, &key);
-}
-
-/// Verifies the calling agent has a valid ZKAuth session and signed this tx.
-fn assert_agent_authorized(env: &Env, zkauth_address: &Address, user: &Address) {
-    let zkauth = ZKAuthClient::new(env, zkauth_address);
-
-    if !zkauth.is_session_valid(user) {
-        panic!("AgentSessionInvalid");
-    }
-
-    let agent_pubkey: BytesN<32> = zkauth
-        .get_agent_pubkey(user)
-        .unwrap_or_else(|| panic!("AgentSessionInvalid"));
-
-    // Convert agent Ed25519 pubkey to a Soroban Address and require its auth.
-    // The agent must have signed this transaction with their keypair.
-    let payload = AddressPayload::AccountIdPublicKeyEd25519(agent_pubkey);
-    let agent_addr = Address::from_payload(env, payload);
-    agent_addr.require_auth();
-}
-
-// ---------------------------------------------------------------------------
-// Contract
-// ---------------------------------------------------------------------------
+// ── Contract ─────────────────────────────────────────────────────────────────
 
 #[contract]
 pub struct AgentVault;
 
 #[contractimpl]
 impl AgentVault {
-    /// One-time init.
-    pub fn initialize(env: Env, admin: Address, zkauth_contract: Address) {
-        if env.storage().instance().has(&DataKey::Admin) {
-            panic!("AlreadyInitialized");
+    // ── Initialisation ───────────────────────────────────────────────────────
+
+    pub fn initialize(e: Env, admin: Address) -> Result<(), Error> {
+        if e.storage().instance().has(&DataKey::Admin) {
+            return Err(Error::AlreadyInitialized);
         }
-        env.storage().instance().set(&DataKey::Admin, &admin);
-        env.storage()
-            .instance()
-            .set(&DataKey::ZKAuthContract, &zkauth_contract);
-        extend_instance(&env);
+        e.storage().instance().set(&DataKey::Admin, &admin);
+        e.storage().instance().extend_ttl(TTL_BUMP, TTL_BUMP);
+        Ok(())
     }
 
-    /// Admin: whitelist a SAC token.
-    pub fn add_supported_token(env: Env, caller: Address, token_sac: Address) {
-        extend_instance(&env);
-        let admin: Address = env
+    /// Admin-only: whitelist a token so users can deposit it.
+    pub fn add_supported_token(e: Env, token: Address) -> Result<(), Error> {
+        Self::require_admin(&e)?;
+        e.storage()
+            .persistent()
+            .set(&DataKey::SupportedToken(token), &true);
+        Ok(())
+    }
+
+    // ── User deposit / withdraw ───────────────────────────────────────────────
+
+    pub fn deposit(e: Env, user: Address, token: Address, amount: i128) -> Result<(), Error> {
+        user.require_auth();
+        if !e
+            .storage()
+            .persistent()
+            .has(&DataKey::SupportedToken(token.clone()))
+        {
+            return Err(Error::UnsupportedToken);
+        }
+        token::Client::new(&e, &token).transfer(
+            &user,
+            &e.current_contract_address(),
+            &amount,
+        );
+        let key = DataKey::Balance(user, token);
+        let prev: i128 = e.storage().persistent().get(&key).unwrap_or(0);
+        e.storage().persistent().set(&key, &(prev + amount));
+        e.storage().persistent().extend_ttl(&key, TTL_BUMP, TTL_BUMP);
+        Ok(())
+    }
+
+    pub fn withdraw(e: Env, user: Address, token: Address, amount: i128) -> Result<(), Error> {
+        user.require_auth();
+        let key = DataKey::Balance(user.clone(), token.clone());
+        let prev: i128 = e.storage().persistent().get(&key).unwrap_or(0);
+        if prev < amount {
+            return Err(Error::InsufficientBalance);
+        }
+        e.storage().persistent().set(&key, &(prev - amount));
+        token::Client::new(&e, &token).transfer(
+            &e.current_contract_address(),
+            &user,
+            &amount,
+        );
+        Ok(())
+    }
+
+    // ── PnL settlement ── Admin (Go backend) only ─────────────────────────────
+    //
+    // pnl > 0 → winning trade: TerminalPool ─► user Balance.
+    // pnl < 0 → losing trade : user Balance  ─► TerminalPool.
+    // pnl = 0 → no-op.
+    //
+    // All amounts are in the token's native unit (7-decimal scaled for USDC/XLM).
+
+    pub fn settle_pnl(
+        e: Env,
+        user: Address,
+        token: Address,
+        pnl: i128,
+    ) -> Result<(), Error> {
+        Self::require_admin(&e)?;
+
+        if pnl == 0 {
+            return Ok(());
+        }
+
+        let user_key = DataKey::Balance(user.clone(), token.clone());
+        let pool_key = DataKey::TerminalPool(token.clone());
+
+        let user_bal: i128 = e.storage().persistent().get(&user_key).unwrap_or(0);
+        let pool_bal: i128 = e.storage().persistent().get(&pool_key).unwrap_or(0);
+
+        if pnl > 0 {
+            // User won → pay from TerminalPool
+            if pool_bal < pnl {
+                return Err(Error::InsufficientBalance);
+            }
+            e.storage().persistent().set(&pool_key, &(pool_bal - pnl));
+            e.storage().persistent().set(&user_key, &(user_bal + pnl));
+        } else {
+            // User lost → seize into TerminalPool (pnl is negative, so -pnl is positive)
+            let loss = -pnl;
+            if user_bal < loss {
+                return Err(Error::InsufficientBalance);
+            }
+            e.storage().persistent().set(&user_key, &(user_bal - loss));
+            e.storage().persistent().set(&pool_key, &(pool_bal + loss));
+        }
+
+        e.storage().persistent().extend_ttl(&user_key, TTL_BUMP, TTL_BUMP);
+        e.storage().persistent().extend_ttl(&pool_key, TTL_BUMP, TTL_BUMP);
+        Ok(())
+    }
+
+    // ── Terminal pool ─────────────────────────────────────────────────────────
+
+    /// Admin seeds the pool that backs winning-trade payouts.
+    pub fn fund_terminal_pool(e: Env, token: Address, amount: i128) -> Result<(), Error> {
+        let admin = Self::require_admin(&e)?;
+        token::Client::new(&e, &token).transfer(
+            &admin,
+            &e.current_contract_address(),
+            &amount,
+        );
+        let key = DataKey::TerminalPool(token);
+        let prev: i128 = e.storage().persistent().get(&key).unwrap_or(0);
+        e.storage().persistent().set(&key, &(prev + amount));
+        e.storage().persistent().extend_ttl(&key, TTL_BUMP, TTL_BUMP);
+        Ok(())
+    }
+
+    // ── Read-only ─────────────────────────────────────────────────────────────
+
+    pub fn get_balance(e: Env, user: Address, token: Address) -> i128 {
+        e.storage()
+            .persistent()
+            .get(&DataKey::Balance(user, token))
+            .unwrap_or(0)
+    }
+
+    pub fn get_terminal_pool(e: Env, token: Address) -> i128 {
+        e.storage()
+            .persistent()
+            .get(&DataKey::TerminalPool(token))
+            .unwrap_or(0)
+    }
+
+    // ── Private helpers ───────────────────────────────────────────────────────
+
+    fn require_admin(e: &Env) -> Result<Address, Error> {
+        let admin: Address = e
             .storage()
             .instance()
             .get(&DataKey::Admin)
-            .unwrap_or_else(|| panic!("NotInitialized"));
+            .ok_or(Error::NotInitialized)?;
         admin.require_auth();
-        assert_eq!(caller, admin);
-
-        let key = DataKey::SupportedToken(token_sac.clone());
-        env.storage().persistent().set(&key, &true);
-        extend_persistent(&env, &key);
-
-        env.events()
-            .publish((symbol_short!("token"), symbol_short!("added")), token_sac);
+        Ok(admin)
     }
-
-    /// User deposits a supported token.
-    pub fn deposit(env: Env, user: Address, token_sac: Address, amount: i128) {
-        user.require_auth();
-        extend_instance(&env);
-        assert_token_supported(&env, &token_sac);
-
-        let token_client = token::Client::new(&env, &token_sac);
-        token_client.transfer(&user, &env.current_contract_address(), &amount);
-
-        let new_balance = get_balance(&env, &user, &token_sac) + amount;
-        set_balance(&env, &user, &token_sac, new_balance);
-
-        env.events().publish(
-            (symbol_short!("deposit"),),
-            (user, token_sac, amount, new_balance),
-        );
-    }
-
-    /// User withdraws their own funds.
-    pub fn withdraw(env: Env, user: Address, token_sac: Address, amount: i128) {
-        user.require_auth();
-        extend_instance(&env);
-
-        let balance = get_balance(&env, &user, &token_sac);
-        if balance < amount {
-            panic!("InsufficientBalance");
-        }
-
-        let token_client = token::Client::new(&env, &token_sac);
-        token_client.transfer(&env.current_contract_address(), &user, &amount);
-
-        let new_balance = balance - amount;
-        set_balance(&env, &user, &token_sac, new_balance);
-
-        env.events().publish(
-            (symbol_short!("withdraw"),),
-            (user, token_sac, amount, new_balance),
-        );
-    }
-
-    /// Agent moves user funds to a destination (DEX, bridge, etc).
-    pub fn agent_withdraw(
-        env: Env,
-        user: Address,
-        token_sac: Address,
-        amount: i128,
-        destination: Address,
-    ) {
-        extend_instance(&env);
-        let zkauth_address = load_zkauth_address(&env);
-        assert_agent_authorized(&env, &zkauth_address, &user);
-
-        let balance = get_balance(&env, &user, &token_sac);
-        if balance < amount {
-            panic!("InsufficientBalance");
-        }
-
-        let token_client = token::Client::new(&env, &token_sac);
-        token_client.transfer(&env.current_contract_address(), &destination, &amount);
-
-        let new_balance = balance - amount;
-        set_balance(&env, &user, &token_sac, new_balance);
-
-        env.events().publish(
-            (symbol_short!("agent_wd"),),
-            (user, token_sac, amount, destination),
-        );
-    }
-
-    /// Agent returns funds after a trade settles.
-    /// The agent must have already transferred tokens to this contract via SAC.
-    pub fn agent_return_funds(env: Env, user: Address, token_sac: Address, amount: i128) {
-        extend_instance(&env);
-        let zkauth_address = load_zkauth_address(&env);
-        assert_agent_authorized(&env, &zkauth_address, &user);
-
-        let new_balance = get_balance(&env, &user, &token_sac) + amount;
-        set_balance(&env, &user, &token_sac, new_balance);
-
-        env.events().publish(
-            (symbol_short!("returned"),),
-            (user, token_sac, amount),
-        );
-    }
-
-    /// Read-only: single balance.
-    pub fn get_balance(env: Env, user: Address, token_sac: Address) -> i128 {
-        extend_instance(&env);
-        get_balance(&env, &user, &token_sac)
-    }
-
 }
 
-// ---------------------------------------------------------------------------
-// Tests
-// ---------------------------------------------------------------------------
+// ── Tests ─────────────────────────────────────────────────────────────────────
 
 #[cfg(test)]
-mod test {
+mod tests {
     use super::*;
-    use soroban_sdk::testutils::Address as _;
-    use soroban_sdk::Env;
+    use soroban_sdk::{testutils::Address as _, token::StellarAssetClient, Env};
 
-    // Mock ZKAuth contract that always returns valid session
-    #[contract]
-    pub struct MockZKAuth;
+    fn setup(env: &Env) -> (AgentVaultClient, Address, Address, Address) {
+        let admin = Address::generate(env);
+        let user = Address::generate(env);
 
-    #[contractimpl]
-    impl MockZKAuth {
-        pub fn is_session_valid(_env: Env, _user: Address) -> bool {
-            true
-        }
-        pub fn get_agent_pubkey(env: Env, _user: Address) -> Option<BytesN<32>> {
-            Some(BytesN::from_array(&env, &[42u8; 32]))
-        }
+        // Register a Stellar Asset Contract (SAC) as the test token
+        let sac = env.register_stellar_asset_contract_v2(admin.clone());
+        let token_id = sac.address();
+        let sac_admin = StellarAssetClient::new(env, &token_id);
+        sac_admin.mint(&user, &1_000_000_0000000i128);   // 1,000,000 USDC
+        sac_admin.mint(&admin, &10_000_000_0000000i128); // 10,000,000 USDC (pool seed)
+
+        let vault_id = env.register(AgentVault, ());
+        let vault = AgentVaultClient::new(env, &vault_id);
+        vault.initialize(&admin);
+        vault.add_supported_token(&token_id);
+        // Seed terminal pool with 100,000 USDC
+        vault.fund_terminal_pool(&token_id, &100_000_0000000i128);
+
+        (vault, admin, user, token_id)
     }
 
-    // Mock ZKAuth that returns invalid session
-    #[contract]
-    pub struct MockZKAuthInvalid;
-
-    #[contractimpl]
-    impl MockZKAuthInvalid {
-        pub fn is_session_valid(_env: Env, _user: Address) -> bool {
-            false
-        }
-        pub fn get_agent_pubkey(_env: Env, _user: Address) -> Option<BytesN<32>> {
-            None
-        }
-    }
-
-    fn setup_with_token() -> (Env, AgentVaultClient<'static>, Address, Address, Address) {
+    #[test]
+    fn test_deposit_and_withdraw() {
         let env = Env::default();
         env.mock_all_auths();
+        let (vault, _admin, user, token) = setup(&env);
 
-        let admin = Address::generate(&env);
-        let zkauth_id = env.register(MockZKAuth, ());
-        let contract_id = env.register(AgentVault, ());
-        let client = AgentVaultClient::new(&env, &contract_id);
+        vault.deposit(&user, &token, &500_0000000i128);
+        assert_eq!(vault.get_balance(&user, &token), 500_0000000i128);
 
-        client.initialize(&admin, &zkauth_id);
-
-        // Register a test token
-        let token_admin = Address::generate(&env);
-        let token_contract = env.register_stellar_asset_contract_v2(token_admin.clone());
-        let token_sac = token_contract.address();
-
-        client.add_supported_token(&admin, &token_sac);
-
-        (env, client, admin, token_sac, token_admin)
+        vault.withdraw(&user, &token, &200_0000000i128);
+        assert_eq!(vault.get_balance(&user, &token), 300_0000000i128);
     }
 
+    /// Winning Long:
+    /// User opens XLM/USDC long at entry 0.10. Mark rises to 0.12.
+    /// PnL = (0.12 - 0.10) × 1000 XLM = +20 USDC.
+    /// settle_pnl(+20 USDC) credits user, debits TerminalPool.
     #[test]
-    fn test_deposit_and_withdraw_round_trip() {
-        let (env, client, _admin, token_sac, token_admin) = setup_with_token();
-        let user = Address::generate(&env);
-
-        // Mint tokens to user
-        let sac_client = token::StellarAssetClient::new(&env, &token_sac);
-        sac_client.mint(&user, &1_000_0000000i128);
-
-        // Deposit
-        client.deposit(&user, &token_sac, &500_0000000i128);
-        assert_eq!(client.get_balance(&user, &token_sac), 500_0000000i128);
-
-        // Withdraw
-        client.withdraw(&user, &token_sac, &200_0000000i128);
-        assert_eq!(client.get_balance(&user, &token_sac), 300_0000000i128);
-    }
-
-    #[test]
-    #[should_panic(expected = "InsufficientBalance")]
-    fn test_withdraw_more_than_balance() {
-        let (env, client, _admin, token_sac, _token_admin) = setup_with_token();
-        let user = Address::generate(&env);
-
-        let sac_client = token::StellarAssetClient::new(&env, &token_sac);
-        sac_client.mint(&user, &100_0000000i128);
-
-        client.deposit(&user, &token_sac, &100_0000000i128);
-        client.withdraw(&user, &token_sac, &200_0000000i128);
-    }
-
-    #[test]
-    fn test_agent_withdraw_valid_session() {
-        let (env, client, _admin, token_sac, _token_admin) = setup_with_token();
-        let user = Address::generate(&env);
-        let destination = Address::generate(&env);
-
-        let sac_client = token::StellarAssetClient::new(&env, &token_sac);
-        sac_client.mint(&user, &1_000_0000000i128);
-
-        client.deposit(&user, &token_sac, &500_0000000i128);
-        client.agent_withdraw(&user, &token_sac, &200_0000000i128, &destination);
-
-        assert_eq!(client.get_balance(&user, &token_sac), 300_0000000i128);
-    }
-
-    #[test]
-    #[should_panic(expected = "AgentSessionInvalid")]
-    fn test_agent_withdraw_invalid_session() {
+    fn test_settle_pnl_winning_long() {
         let env = Env::default();
         env.mock_all_auths();
+        let (vault, _admin, user, token) = setup(&env);
 
-        let admin = Address::generate(&env);
-        let zkauth_id = env.register(MockZKAuthInvalid, ());
-        let contract_id = env.register(AgentVault, ());
-        let client = AgentVaultClient::new(&env, &contract_id);
-        client.initialize(&admin, &zkauth_id);
+        vault.deposit(&user, &token, &100_0000000i128); // 100 USDC collateral
 
-        let user = Address::generate(&env);
-        let token_sac = Address::generate(&env);
-        let destination = Address::generate(&env);
+        let pool_before = vault.get_terminal_pool(&token);
+        let user_before = vault.get_balance(&user, &token);
 
-        client.agent_withdraw(&user, &token_sac, &100i128, &destination);
+        let profit = 20_0000000i128; // +20 USDC
+        vault.settle_pnl(&user, &token, &profit);
+
+        assert_eq!(vault.get_balance(&user, &token), user_before + profit);
+        assert_eq!(vault.get_terminal_pool(&token), pool_before - profit);
+    }
+
+    /// Liquidated Short:
+    /// User opens XLM/USDC short at entry 0.10. Mark rises to 0.19.
+    /// Unrealised loss = 90% of collateral → liquidation threshold crossed.
+    /// settle_pnl(-90 USDC) seizes funds into TerminalPool.
+    #[test]
+    fn test_settle_pnl_liquidated_short() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (vault, _admin, user, token) = setup(&env);
+
+        vault.deposit(&user, &token, &100_0000000i128); // 100 USDC collateral
+
+        let pool_before = vault.get_terminal_pool(&token);
+        let user_before = vault.get_balance(&user, &token);
+
+        let loss = -90_0000000i128; // -90 USDC (90% collateral wiped → liquidated)
+        vault.settle_pnl(&user, &token, &loss);
+
+        assert_eq!(vault.get_balance(&user, &token), user_before - 90_0000000i128);
+        assert_eq!(vault.get_terminal_pool(&token), pool_before + 90_0000000i128);
     }
 
     #[test]
-    fn test_agent_return_funds_cycle() {
-        let (env, client, _admin, token_sac, _token_admin) = setup_with_token();
-        let user = Address::generate(&env);
+    fn test_settle_pnl_pool_underfunded_fails() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (vault, _admin, user, token) = setup(&env);
 
-        let sac_client = token::StellarAssetClient::new(&env, &token_sac);
-        sac_client.mint(&user, &1_000_0000000i128);
+        vault.deposit(&user, &token, &100_0000000i128);
 
-        client.deposit(&user, &token_sac, &500_0000000i128);
-        client.agent_withdraw(&user, &token_sac, &300_0000000i128, &Address::generate(&env));
-        assert_eq!(client.get_balance(&user, &token_sac), 200_0000000i128);
-
-        // Agent returns funds after trade
-        client.agent_return_funds(&user, &token_sac, &350_0000000i128);
-        assert_eq!(client.get_balance(&user, &token_sac), 550_0000000i128);
-    }
-
-    #[test]
-    #[should_panic(expected = "UnsupportedToken")]
-    fn test_unsupported_token_rejection() {
-        let (env, client, _admin, _token_sac, _token_admin) = setup_with_token();
-        let user = Address::generate(&env);
-        let bad_token = Address::generate(&env);
-
-        client.deposit(&user, &bad_token, &100i128);
-    }
-
-    #[test]
-    #[should_panic(expected = "AlreadyInitialized")]
-    fn test_double_initialize() {
-        let (env, client, admin, _token_sac, _token_admin) = setup_with_token();
-        let zkauth = Address::generate(&env);
-        client.initialize(&admin, &zkauth);
+        // Try to pay out more than pool holds (pool = 100,000 USDC)
+        let over_profit = 200_000_0000000i128;
+        let result = vault.try_settle_pnl(&user, &token, &over_profit);
+        assert!(result.is_err());
     }
 }

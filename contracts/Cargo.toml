@@ -1,7 +1,6 @@
 [workspace]
 resolver = "2"
 members = [
-    "contracts/zk_auth",
     "contracts/agent_vault",
     "contracts/leverage_pool",
 ]
