@@ -215,24 +215,42 @@ export default function UserVault() {
         margin,
         signTransaction,
       );
+      // Show the position card immediately — don't wait for fetchOnChainPos
+      setSdexPos({
+        side:           tradeSide,
+        xlmAmount:      xlmAmt,
+        entryPrice:     markPrice,
+        totalUSDC:      xlmAmt * markPrice,
+        collateralUSDC: margin,
+        leverage:       tradeLev,
+        markPrice:      0,
+        unrealPnL:      0,
+      });
       setTradeStatus({ ok: true, msg: `${tradeSide === 'long' ? 'Long' : 'Short'} ${tradeLev}× opened @ ${markPrice.toFixed(6)}` });
       setTradeXLM('');
       refreshBalances();
-      // Refresh on-chain position after brief delay
-      setTimeout(() => { if (address) fetchOnChainPos(address); }, 3000);
+      // Sync with on-chain state after a short delay
+      setTimeout(() => { if (address) fetchOnChainPos(address); }, 4000);
     } catch (err) {
-      setTradeStatus({ ok: false, msg: String(err) });
+      console.error('[handleOpen]', err);
+      const msg = err instanceof Error
+        ? err.message
+        : (typeof err === 'object' && err !== null)
+        ? JSON.stringify(err)
+        : String(err);
+      setTradeStatus({ ok: false, msg });
     } finally { setTradeBusy(false); }
   };
 
   // ── Close synthetic position (user-signed, direct contract call) ───────────
 
   const handleClose = async () => {
-    if (!address || !sdexPos || markPrice === null) return;
+    if (!address || !sdexPos) return;
+    const closePrice = markPrice ?? sdexPos.entryPrice;
     setCloseBusy(true); setTradeStatus(null);
     try {
-      await contracts.closePosition(address, contracts.USDC_CONTRACT, markPrice, signTransaction);
-      setTradeStatus({ ok: true, msg: `Closed @ ${markPrice.toFixed(6)}` });
+      await contracts.closePosition(address, contracts.USDC_CONTRACT, closePrice, signTransaction);
+      setTradeStatus({ ok: true, msg: `Closed @ ${closePrice.toFixed(6)}` });
       setSdexPos(null);
       refreshBalances();
     } catch (err) {

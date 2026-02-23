@@ -90,33 +90,39 @@ func (c *Client) SettleTrade(ctx context.Context, userAddr string, pnlScaled int
 //
 //   - user              – G... address of the trader
 //   - assetSymbol       – short symbol string, e.g. "XLM" (Soroban Symbol type)
-//   - debtScaled        – notional debt in 7-decimal units
+//   - xlmAmountScaled   – position size in base-asset units (7-decimal scaled)
+//   - entryPriceScaled  – entry price in USDC per token (7-decimal scaled)
+//   - isLong            – true = long, false = short
 //   - collateralToken   – C... address of the collateral token
 //   - collateralScaled  – amount of collateral to lock in 7-decimal units
 func (c *Client) OpenPosition(
 	ctx context.Context,
 	user, assetSymbol string,
-	debtScaled int64,
+	xlmAmountScaled, entryPriceScaled int64,
+	isLong bool,
 	collateralToken string,
 	collateralScaled int64,
 ) error {
-	log.Printf("[soroban] OpenPosition user=%s symbol=%s debt=%d collateral=%d",
-		user, assetSymbol, debtScaled, collateralScaled)
+	log.Printf("[soroban] OpenPosition user=%s symbol=%s xlm=%d price=%d long=%v collateral=%d",
+		user, assetSymbol, xlmAmountScaled, entryPriceScaled, isLong, collateralScaled)
 
 	userArg, err := accountScVal(user)
 	if err != nil {
 		return fmt.Errorf("soroban: bad user address: %w", err)
 	}
 	symArg := symbolScVal(assetSymbol)
-	debtArg := i128ScVal(debtScaled)
+	xlmArg := i128ScVal(xlmAmountScaled)
+	entryArg := i128ScVal(entryPriceScaled)
+	isLongArg := boolScVal(isLong)
 	collTokenArg, err := contractScVal(collateralToken)
 	if err != nil {
 		return fmt.Errorf("soroban: bad collateral token: %w", err)
 	}
 	collLockedArg := i128ScVal(collateralScaled)
 
+	// arg order matches contract: user, asset_symbol, xlm_amount, entry_price, is_long, collateral_token, collateral_locked
 	return c.invoke(ctx, c.PoolContractID, "open_synthetic_position",
-		xdr.ScVec{userArg, symArg, debtArg, collTokenArg, collLockedArg})
+		xdr.ScVec{userArg, symArg, xlmArg, entryArg, isLongArg, collTokenArg, collLockedArg})
 }
 
 // ClosePosition calls LeveragePool.close_position(user, collateral_token, close_price).
@@ -396,6 +402,11 @@ func contractScAddress(contractID string) (xdr.ScAddress, error) {
 func symbolScVal(sym string) xdr.ScVal {
 	s := xdr.ScSymbol(sym)
 	return xdr.ScVal{Type: xdr.ScValTypeScvSymbol, Sym: &s}
+}
+
+// boolScVal wraps a Go bool as a Soroban Bool ScVal (SCV_BOOL discriminant = 0).
+func boolScVal(b bool) xdr.ScVal {
+	return xdr.ScVal{Type: xdr.ScValTypeScvBool, B: &b}
 }
 
 // ── Misc helpers ─────────────────────────────────────────────────────────────

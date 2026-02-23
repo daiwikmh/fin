@@ -143,7 +143,10 @@ func (le *LiquidationEngine) checkAll(ctx context.Context) {
 
 		// Pass the current mark price; the contract computes PnL on-chain.
 		if err := le.settle(ctx, p.UserToken, p.Symbol, markPrice); err != nil {
-			log.Printf("[liquidation] settle error for %s: %v", p.UserToken, err)
+			log.Printf("[liquidation] settle error for %s: %v — removing stale position", p.UserToken, err)
+			// Remove regardless of error type: if the contract says NoOpenPosition
+			// or the tx fails, the position no longer needs tracking.
+			le.RemovePosition(p.UserToken)
 			continue
 		}
 

@@ -64,7 +64,9 @@ func (h *AdminHandler) Settle(w http.ResponseWriter, r *http.Request) {
 type openPositionRequest struct {
 	User             string  `json:"user"`             // G... address
 	AssetSymbol      string  `json:"assetSymbol"`      // e.g. "XLM"
-	DebtAmount       float64 `json:"debtAmount"`       // notional debt (scaled internally)
+	XlmAmount        float64 `json:"xlmAmount"`        // position size in base-asset units
+	EntryPrice       float64 `json:"entryPrice"`       // entry price in USDC per token
+	IsLong           bool    `json:"isLong"`           // true = long, false = short
 	CollateralToken  string  `json:"collateralToken"`  // C... address
 	CollateralLocked float64 `json:"collateralLocked"` // collateral to lock (scaled internally)
 }
@@ -87,13 +89,14 @@ func (h *AdminHandler) OpenPosition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	debtScaled := int64(req.DebtAmount * float64(soroban.ScaleFactor))
+	xlmScaled := int64(req.XlmAmount * float64(soroban.ScaleFactor))
+	entryScaled := int64(req.EntryPrice * float64(soroban.ScaleFactor))
 	collScaled := int64(req.CollateralLocked * float64(soroban.ScaleFactor))
 
 	if err := h.Soroban.OpenPosition(
 		r.Context(),
 		req.User, req.AssetSymbol,
-		debtScaled,
+		xlmScaled, entryScaled, req.IsLong,
 		req.CollateralToken,
 		collScaled,
 	); err != nil {

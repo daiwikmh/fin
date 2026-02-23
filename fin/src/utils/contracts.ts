@@ -10,7 +10,7 @@
  *   returns the signed envelope, stellar-base v13's fromXDR fails with
  *   "Bad union switch: 4". Submitting via fetch avoids that parse step entirely.
  */
-import { Networks } from 'stellar-sdk';
+import { Networks, xdr } from 'stellar-sdk';
 import type { ClientOptions } from 'stellar-sdk/contract';
 import { VaultClient, VAULT_CONTRACT_ID } from './vault_client';
 import { LeverageClient, LEVERAGE_CONTRACT_ID } from './leverage_client';
@@ -167,17 +167,33 @@ export async function lpWithdraw(
 
 /**
  * Open a synthetic leveraged position directly from the user's wallet.
- * Works because the deployer's Freighter address = the contract admin,
- * so admin.require_auth() is satisfied by the Freighter signature.
+ *
+ * WHY we strip auth entries instead of calling tx.toXDR() directly:
+ *
+ * assembleTransaction attaches simulation auth entries via parsers.js:111:
+ *   SorobanAuthorizationEntry.fromXDR(entry, 'base64')
+ *
+ * open_synthetic_position is the only function with a bool arg (is_long).
+ * stellar-base v13 misaligns scvBool (discriminant=0) when re-encoding a
+ * SorobanAuthorizationEntry parsed from Protocol 22 simulation XDR
+ * → corrupt auth bytes → txMALFORMED.
+ *
+ * Fix: assemble normally (ContractSpec builds correct function-call ScVals),
+ * parse the assembled XDR into an XDR envelope object (v13→v13 round-trip
+ * for the function args is lossless since ContractSpec wrote them), then
+ * clear the corrupt auth entries from the InvokeHostFunctionOp before
+ * signing.  In Soroban Protocol 22, user.require_auth() where user equals
+ * the transaction source account is satisfied by the source-account signature
+ * alone — no explicit SorobanAuthorizationEntry is required.
  */
 export async function openPosition(
   user: string,
   assetSymbol: string,
-  xlmAmount: number,       // XLM quantity
-  entryPrice: number,      // USDC/XLM mark price at open
+  xlmAmount: number,
+  entryPrice: number,
   isLong: boolean,
   collateralToken: string,
-  collateralLocked: number, // required margin
+  collateralLocked: number,
   walletSign: WalletSignFn,
 ): Promise<void> {
   const tx = await leverageClient(user).open_synthetic_position({
@@ -189,7 +205,18 @@ export async function openPosition(
     collateral_token:  collateralToken,
     collateral_locked: toI128(collateralLocked),
   });
-  await signAndSubmit(tx.toXDR(), walletSign);
+
+  // Parse the assembled envelope.  Function-call args (including scvBool) were
+  // written by stellar-base v13 ContractSpec and survive the v13→v13 round-trip.
+  // Auth entries were parsed from Protocol 22 simulation XDR via fromXDR and are
+  // corrupt on re-encode (scvBool misalignment).  Clear them before signing.
+  const envelope = xdr.TransactionEnvelope.fromXDR(tx.toXDR(), 'base64');
+  (envelope as any)
+    .v1().tx().operations()[0]
+    .body().invokeHostFunctionOp()
+    .auth([]);
+
+  await signAndSubmit(envelope.toXDR('base64'), walletSign);
 }
 
 /**

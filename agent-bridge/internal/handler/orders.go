@@ -141,15 +141,16 @@ func (h *OrdersHandler) processFill(fill matching.MatchResult) {
 		}
 
 		// collateral_locked = notional / leverage
-		// debt_amount       = notional  (= collateral * leverage)
 		collateral := notional / float64(p.order.Leverage)
-		debtScaled := int64(notional * float64(soroban.ScaleFactor))
+		xlmScaled := int64(fill.FillAmount * float64(soroban.ScaleFactor))
+		entryScaled := int64(fill.FillPrice * float64(soroban.ScaleFactor))
 		collScaled := int64(collateral * float64(soroban.ScaleFactor))
+		isLong := p.side == "long"
 
 		if err := h.Soroban.OpenPosition(
 			ctx,
 			conn.AccountID, assetSymbol,
-			debtScaled,
+			xlmScaled, entryScaled, isLong,
 			h.SettlementToken,
 			collScaled,
 		); err != nil {
