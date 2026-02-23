@@ -21,9 +21,8 @@ interface SDEXPosition {
   openTxHash?: string;
 }
 
-const BRIDGE_URL    = process.env.NEXT_PUBLIC_AGENT_BRIDGE_URL ?? 'http://localhost:8090';
-const LS_TOKEN_KEY  = 'uv-bridge-token';
-const LS_POS_KEY    = 'uv-open-position'; // { side, xlmAmount, entryPrice, leverage }
+const BRIDGE_URL   = process.env.NEXT_PUBLIC_AGENT_BRIDGE_URL ?? 'http://localhost:8090';
+const LS_TOKEN_KEY = 'uv-bridge-token';
 
 export default function UserVault() {
   const { address, isConnected, connectWallet, signTransaction } = useWallet();
@@ -111,35 +110,18 @@ export default function UserVault() {
     try {
       const pos = await contracts.getPosition(addr);
       if (!pos) { setSdexPos(null); return; }
-      // Merge on-chain data with local mark price for PnL display.
-      // For positions opened via the frontend, entryPrice is stored in
-      // the bridge store; fall back to fetching from bridge if available.
-      const bridgeData = tradeToken
-        ? await fetch(`${BRIDGE_URL}/api/positions?token=${tradeToken}`)
-            .then(r => r.ok ? r.json() : null).catch(() => null)
-        : null;
-      const entryPrice = bridgeData?.entryPrice ?? 0;
-      const xlmAmount  = bridgeData?.xlmAmount  ?? (pos.debt_amount / (entryPrice || 1));
-      const side       = bridgeData?.side        ?? 'long';
-      const leverage   = bridgeData?.leverage    ?? 1;
       setSdexPos({
-        side,
-        xlmAmount,
-        entryPrice,
+        side:           pos.is_long ? 'long' : 'short',
+        xlmAmount:      pos.xlm_amount,
+        entryPrice:     pos.entry_price,
         totalUSDC:      pos.debt_amount,
         collateralUSDC: pos.collateral_locked,
-        leverage,
+        leverage:       pos.collateral_locked > 0
+                          ? Math.round(pos.debt_amount / pos.collateral_locked)
+                          : 1,
         markPrice:      0, // filled by mark price state
         unrealPnL:      0, // computed in render
       });
-    } catch { /* ignore */ }
-  }, [tradeToken]);
-
-  const fetchSdexPos = useCallback(async (tok: string) => {
-    if (!tok) return;
-    try {
-      const data = await fetch(`${BRIDGE_URL}/api/positions?token=${tok}`).then(r => r.json());
-      setSdexPos(data ?? null);
     } catch { /* ignore */ }
   }, []);
 
@@ -219,30 +201,20 @@ export default function UserVault() {
   const handleOpen = async () => {
     if (!address || !tradeXLM || markPrice === null) return;
     setTradeBusy(true); setTradeStatus(null);
-    const xlmAmt  = parseFloat(tradeXLM);
-    const notionalUsdc = xlmAmt * markPrice;
-    const marginUsdc   = notionalUsdc / tradeLev;
+    const xlmAmt   = parseFloat(tradeXLM);
+    const notional = xlmAmt * markPrice;
+    const margin   = notional / tradeLev;
     try {
       await contracts.openPosition(
         address,
         'XLM',
-        notionalUsdc,
+        xlmAmt,
+        markPrice,
+        tradeSide === 'long',
         contracts.USDC_CONTRACT,
-        marginUsdc,
+        margin,
         signTransaction,
       );
-      // Persist position metadata locally so the position card survives refreshes
-      localStorage.setItem(LS_POS_KEY, JSON.stringify({
-        side: tradeSide, xlmAmount: xlmAmt, entryPrice: markPrice, leverage: tradeLev,
-      }));
-      // Record in bridge store for PnL tracking (fire-and-forget, best effort)
-      if (tradeToken) {
-        fetch(`${BRIDGE_URL}/api/positions/open`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ token: tradeToken, side: tradeSide, xlmAmount: xlmAmt, leverage: tradeLev }),
-        }).catch(() => {});
-      }
       setTradeStatus({ ok: true, msg: `${tradeSide === 'long' ? 'Long' : 'Short'} ${tradeLev}× opened @ ${markPrice.toFixed(6)}` });
       setTradeXLM('');
       refreshBalances();
@@ -256,27 +228,11 @@ export default function UserVault() {
   // ── Close synthetic position (user-signed, direct contract call) ───────────
 
   const handleClose = async () => {
-    if (!address || !sdexPos) return;
+    if (!address || !sdexPos || markPrice === null) return;
     setCloseBusy(true); setTradeStatus(null);
-    // Use live mark price if available; fall back to entry price (pnl ≈ 0).
-    const closePrice = markPrice ?? sdexPos.entryPrice;
-    const pnl = sdexPos.entryPrice === 0
-      ? 0  // no entry data — close flat, collateral returned
-      : (sdexPos.side === 'long'
-          ? (closePrice - sdexPos.entryPrice) * sdexPos.xlmAmount
-          : (sdexPos.entryPrice - closePrice) * sdexPos.xlmAmount);
     try {
-      await contracts.closePosition(address, contracts.USDC_CONTRACT, pnl, signTransaction);
-      // Notify bridge to drop local tracking (best effort)
-      if (tradeToken) {
-        fetch(`${BRIDGE_URL}/api/positions/close`, {
-          method:  'POST',
-          headers: { 'Content-Type': 'application/json' },
-          body:    JSON.stringify({ token: tradeToken }),
-        }).catch(() => {});
-      }
-      const sign = pnl >= 0 ? '+' : '';
-      setTradeStatus({ ok: true, msg: `Closed @ ${closePrice.toFixed(6)} — PnL: ${sign}${pnl.toFixed(4)} USDC` });
+      await contracts.closePosition(address, contracts.USDC_CONTRACT, markPrice, signTransaction);
+      setTradeStatus({ ok: true, msg: `Closed @ ${markPrice.toFixed(6)}` });
       setSdexPos(null);
       refreshBalances();
     } catch (err) {

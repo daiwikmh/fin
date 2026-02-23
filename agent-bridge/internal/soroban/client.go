@@ -119,11 +119,12 @@ func (c *Client) OpenPosition(
 		xdr.ScVec{userArg, symArg, debtArg, collTokenArg, collLockedArg})
 }
 
-// ClosePosition calls LeveragePool.close_position(user, collateral_token, pnl).
-// Settles PnL directly against the LP pool: positive pnl credits the user from the
-// pool; negative pnl credits the pool from the user's locked collateral.
-func (c *Client) ClosePosition(ctx context.Context, user, collateralToken string, pnlScaled int64) error {
-	log.Printf("[soroban] ClosePosition user=%s collateral=%s pnl=%d", user, collateralToken, pnlScaled)
+// ClosePosition calls LeveragePool.close_position(user, collateral_token, close_price).
+// The contract computes PnL on-chain from the stored entry_price, xlm_amount, and is_long.
+// closePrice is the current mark price in human USDC units (7-decimal scaling applied here).
+func (c *Client) ClosePosition(ctx context.Context, user, collateralToken string, closePrice float64) error {
+	closePriceScaled := int64(closePrice * float64(ScaleFactor))
+	log.Printf("[soroban] ClosePosition user=%s collateral=%s close_price=%.7f (%d)", user, collateralToken, closePrice, closePriceScaled)
 
 	userArg, err := accountScVal(user)
 	if err != nil {
@@ -133,10 +134,10 @@ func (c *Client) ClosePosition(ctx context.Context, user, collateralToken string
 	if err != nil {
 		return fmt.Errorf("soroban: bad collateral token: %w", err)
 	}
-	pnlArg := i128ScVal(pnlScaled)
+	closePriceArg := i128ScVal(closePriceScaled)
 
 	return c.invoke(ctx, c.PoolContractID, "close_position",
-		xdr.ScVec{userArg, collTokenArg, pnlArg})
+		xdr.ScVec{userArg, collTokenArg, closePriceArg})
 }
 
 // ── Core invoke loop ─────────────────────────────────────────────────────────

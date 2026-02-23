@@ -173,15 +173,19 @@ export async function lpWithdraw(
 export async function openPosition(
   user: string,
   assetSymbol: string,
-  debtAmount: number,      // notional USDC  (= xlmAmount × markPrice)
+  xlmAmount: number,       // XLM quantity
+  entryPrice: number,      // USDC/XLM mark price at open
+  isLong: boolean,
   collateralToken: string,
-  collateralLocked: number, // required margin (= debtAmount / leverage)
+  collateralLocked: number, // required margin
   walletSign: WalletSignFn,
 ): Promise<void> {
   const tx = await leverageClient(user).open_synthetic_position({
     user,
-    asset_symbol: assetSymbol,
-    debt_amount:       toI128(debtAmount),
+    asset_symbol:      assetSymbol,
+    xlm_amount:        toI128(xlmAmount),
+    entry_price:       toI128(entryPrice),
+    is_long:           isLong,
     collateral_token:  collateralToken,
     collateral_locked: toI128(collateralLocked),
   });
@@ -189,19 +193,19 @@ export async function openPosition(
 }
 
 /**
- * Close the caller's open position and settle PnL against the LP pool.
- * pnlHuman is the signed USDC profit/loss (positive = profit, negative = loss).
+ * Close the caller's open position. Pass the current mark price; the contract
+ * computes PnL on-chain from stored entry_price, xlm_amount, and is_long.
  */
 export async function closePosition(
   user: string,
   collateralToken: string,
-  pnlHuman: number,
+  closePrice: number,
   walletSign: WalletSignFn,
 ): Promise<void> {
   const tx = await leverageClient(user).close_position({
     user,
     collateral_token: collateralToken,
-    pnl: toI128(pnlHuman),
+    close_price:      toI128(closePrice),
   });
   await signAndSubmit(tx.toXDR(), walletSign);
 }
@@ -255,6 +259,9 @@ export interface PositionHuman {
   asset_symbol:      string;
   debt_amount:       number;
   collateral_locked: number;
+  entry_price:       number;
+  xlm_amount:        number;
+  is_long:           boolean;
   user:              string;
 }
 
@@ -267,6 +274,9 @@ export async function getPosition(user: string): Promise<PositionHuman | null> {
     asset_symbol:      pos.asset_symbol ?? '',
     debt_amount:       fromI128(pos.debt_amount),
     collateral_locked: fromI128(pos.collateral_locked),
+    entry_price:       fromI128(pos.entry_price),
+    xlm_amount:        fromI128(pos.xlm_amount),
+    is_long:           pos.is_long ?? true,
     user:              pos.user ?? user,
   };
 }

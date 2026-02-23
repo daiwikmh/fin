@@ -18,10 +18,10 @@ type OpenPosition struct {
 	DebtAmount       float64 // notional = collateral * leverage
 }
 
-// SettleFunc is called by the liquidation engine to request a PnL settlement.
-// pnl > 0 means the user won; pnl < 0 means funds are seized from the user.
-// The implementation should invoke AgentVault.settle_pnl on-chain.
-type SettleFunc func(ctx context.Context, userToken string, symbol string, pnl float64) error
+// SettleFunc is called by the liquidation engine to close a position on-chain.
+// closePrice is the current mark price; the contract computes PnL from stored
+// entry data.  symbol is provided for logging / routing purposes.
+type SettleFunc func(ctx context.Context, userToken string, symbol string, closePrice float64) error
 
 // LiquidationEngine monitors open positions against the live mark price and
 // triggers settlement when a position crosses the 90% collateral-loss threshold.
@@ -141,9 +141,8 @@ func (le *LiquidationEngine) checkAll(ctx context.Context) {
 			p.UserToken, p.Symbol, p.Side, p.EntryPrice, markPrice, unrealisedLoss, p.CollateralAmount,
 		)
 
-		// Seize the full collateral: pnl = -collateralAmount
-		pnl := -p.CollateralAmount
-		if err := le.settle(ctx, p.UserToken, p.Symbol, pnl); err != nil {
+		// Pass the current mark price; the contract computes PnL on-chain.
+		if err := le.settle(ctx, p.UserToken, p.Symbol, markPrice); err != nil {
 			log.Printf("[liquidation] settle error for %s: %v", p.UserToken, err)
 			continue
 		}

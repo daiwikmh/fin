@@ -34,7 +34,7 @@ if (typeof window !== "undefined") {
 export const networks = {
   testnet: {
     networkPassphrase: "Test SDF Network ; September 2015",
-    contractId: "CABMAGG3RY463HQFYYUYAD5BQS7EG6G3K7D4Q6EZUZXSGH5BOJDZ3ZUM",
+    contractId: "CCKZICAZIICUMVVSX2YHITOCV2E5LO4YQKCO5VYAS7G3PZYLN5N32UXL",
   }
 } as const
 
@@ -63,12 +63,25 @@ asset_symbol: string;
 collateral_locked: i128;
   /**
  * Notional debt the user has taken on (scaled to 7 decimals).
+ * Computed on-chain as xlm_amount * entry_price / SCALE.
  */
 debt_amount: i128;
+  /**
+ * Entry price of the synthetic asset (USDC per token, 7-decimal scaled).
+ */
+entry_price: i128;
+  /**
+ * true = long, false = short.
+ */
+is_long: boolean;
   /**
  * The user who owns this position.
  */
 user: string;
+  /**
+ * Size of the position in synthetic asset units (7-decimal scaled).
+ */
+xlm_amount: i128;
 }
 
 export interface Client {
@@ -102,8 +115,12 @@ export interface Client {
 
   /**
    * Construct and simulate a close_position transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * User-callable. Settles PnL directly against the LP pool and releases collateral.
-   * The caller provides the signed PnL (computed off-chain from the oracle close price).
+   * Closes the caller's open position and settles PnL against the LP pool.
+   * 
+   * PnL is computed on-chain from stored entry data and the caller-provided
+   * close price:
+   * - long:  pnl = (close_price - entry_price) * xlm_amount / SCALE
+   * - short: pnl = (entry_price - close_price) * xlm_amount / SCALE
    * 
    * - pnl > 0: pool pays the winner — PoolBalance -= pnl, UserMargin += collateral + pnl
    * - pnl < 0: pool gains from the loser — PoolBalance += |pnl|, UserMargin += collateral - |pnl|
@@ -111,7 +128,7 @@ export interface Client {
    * 
    * Returns `InsufficientPool` if the pool cannot cover a winning payout.
    */
-  close_position: ({user, collateral_token, pnl}: {user: string, collateral_token: string, pnl: i128}, options?: MethodOptions) => Promise<AssembledTransaction<Result<Position>>>
+  close_position: ({user, collateral_token, close_price}: {user: string, collateral_token: string, close_price: i128}, options?: MethodOptions) => Promise<AssembledTransaction<Result<Position>>>
 
   /**
    * Construct and simulate a get_pool_balance transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
@@ -145,11 +162,13 @@ export interface Client {
 
   /**
    * Construct and simulate a open_synthetic_position transaction. Returns an `AssembledTransaction` object which will have a `result` field containing the result of the simulation. If this transaction changes contract state, you will need to call `signAndSend()` on the returned object.
-   * Called by the user from the frontend after computing economics off-chain.
-   * Locks `collateral_locked` from the user's free margin and records the
-   * Position on-chain for transparency and liquidation tracking.
+   * Opens a synthetic leveraged position.
+   * 
+   * Computes `debt_amount = xlm_amount * entry_price / SCALE` on-chain so the
+   * caller cannot manipulate the notional. Locks `collateral_locked` from the
+   * user's free margin.
    */
-  open_synthetic_position: ({user, asset_symbol, debt_amount, collateral_token, collateral_locked}: {user: string, asset_symbol: string, debt_amount: i128, collateral_token: string, collateral_locked: i128}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
+  open_synthetic_position: ({user, asset_symbol, xlm_amount, entry_price, is_long, collateral_token, collateral_locked}: {user: string, asset_symbol: string, xlm_amount: i128, entry_price: i128, is_long: boolean, collateral_token: string, collateral_locked: i128}, options?: MethodOptions) => Promise<AssembledTransaction<Result<void>>>
 
 }
 export class Client extends ContractClient {
@@ -171,19 +190,19 @@ export class Client extends ContractClient {
     super(
       new ContractSpec([ "AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAACAAAAAAAAAAOTm90SW5pdGlhbGl6ZWQAAAAAAAEAAAAAAAAAEkFscmVhZHlJbml0aWFsaXplZAAAAAAAAgAAAAAAAAAMVW5hdXRob3JpemVkAAAAAwAAAAAAAAAWSW5zdWZmaWNpZW50Q29sbGF0ZXJhbAAAAAAABAAAAAAAAAATUG9zaXRpb25BbHJlYWR5T3BlbgAAAAAFAAAAAAAAAA5Ob09wZW5Qb3NpdGlvbgAAAAAABgAAAAAAAAAVVW5zdXBwb3J0ZWRDb2xsYXRlcmFsAAAAAAAABwAAAAAAAAAQSW5zdWZmaWNpZW50UG9vbAAAAAg=",
         "AAAAAgAAAAAAAAAAAAAAB0RhdGFLZXkAAAAABgAAAAAAAAAAAAAABUFkbWluAAAAAAAAAQAAAAAAAAATU3VwcG9ydGVkQ29sbGF0ZXJhbAAAAAABAAAAEwAAAAEAAAAAAAAAClVzZXJNYXJnaW4AAAAAAAIAAAATAAAAEwAAAAEAAAAAAAAAC1Bvb2xCYWxhbmNlAAAAAAEAAAATAAAAAQAAAAAAAAAITFBTaGFyZXMAAAACAAAAEwAAABMAAAABAAAAAAAAAAhQb3NpdGlvbgAAAAEAAAAT",
-        "AAAAAQAAAAAAAAAAAAAACFBvc2l0aW9uAAAABAAAAEpIdW1hbi1yZWFkYWJsZSBzeW1ib2wgb2YgdGhlIHN5bnRoZXRpYyBhc3NldCwgZS5nLiBgc3ltYm9sX3Nob3J0ISgiWExNIilgLgAAAAAADGFzc2V0X3N5bWJvbAAAABEAAAA4QW1vdW50IG9mIGNvbGxhdGVyYWwgbG9ja2VkIHdoaWxlIHRoaXMgcG9zaXRpb24gaXMgb3Blbi4AAAARY29sbGF0ZXJhbF9sb2NrZWQAAAAAAAALAAAAO05vdGlvbmFsIGRlYnQgdGhlIHVzZXIgaGFzIHRha2VuIG9uIChzY2FsZWQgdG8gNyBkZWNpbWFscykuAAAAAAtkZWJ0X2Ftb3VudAAAAAALAAAAIFRoZSB1c2VyIHdobyBvd25zIHRoaXMgcG9zaXRpb24uAAAABHVzZXIAAAAT",
+        "AAAAAQAAAAAAAAAAAAAACFBvc2l0aW9uAAAABwAAAEpIdW1hbi1yZWFkYWJsZSBzeW1ib2wgb2YgdGhlIHN5bnRoZXRpYyBhc3NldCwgZS5nLiBgc3ltYm9sX3Nob3J0ISgiWExNIilgLgAAAAAADGFzc2V0X3N5bWJvbAAAABEAAAA4QW1vdW50IG9mIGNvbGxhdGVyYWwgbG9ja2VkIHdoaWxlIHRoaXMgcG9zaXRpb24gaXMgb3Blbi4AAAARY29sbGF0ZXJhbF9sb2NrZWQAAAAAAAALAAAAck5vdGlvbmFsIGRlYnQgdGhlIHVzZXIgaGFzIHRha2VuIG9uIChzY2FsZWQgdG8gNyBkZWNpbWFscykuCkNvbXB1dGVkIG9uLWNoYWluIGFzIHhsbV9hbW91bnQgKiBlbnRyeV9wcmljZSAvIFNDQUxFLgAAAAAAC2RlYnRfYW1vdW50AAAAAAsAAABGRW50cnkgcHJpY2Ugb2YgdGhlIHN5bnRoZXRpYyBhc3NldCAoVVNEQyBwZXIgdG9rZW4sIDctZGVjaW1hbCBzY2FsZWQpLgAAAAAAC2VudHJ5X3ByaWNlAAAAAAsAAAAbdHJ1ZSA9IGxvbmcsIGZhbHNlID0gc2hvcnQuAAAAAAdpc19sb25nAAAAAAEAAAAgVGhlIHVzZXIgd2hvIG93bnMgdGhpcyBwb3NpdGlvbi4AAAAEdXNlcgAAABMAAABBU2l6ZSBvZiB0aGUgcG9zaXRpb24gaW4gc3ludGhldGljIGFzc2V0IHVuaXRzICg3LWRlY2ltYWwgc2NhbGVkKS4AAAAAAAAKeGxtX2Ftb3VudAAAAAAACw==",
         "AAAAAAAAAAAAAAAKaW5pdGlhbGl6ZQAAAAAAAQAAAAAAAAAFYWRtaW4AAAAAAAATAAAAAQAAA+kAAAACAAAAAw==",
         "AAAAAAAAAEFMUCBkZXBvc2l0cyB0byB0aGUgc2hhcmVkIHBvb2wuIEluY3JlbWVudHMgTFBTaGFyZXModXNlciwgdG9rZW4pLgAAAAAAAApscF9kZXBvc2l0AAAAAAADAAAAAAAAAAR1c2VyAAAAEwAAAAAAAAAFdG9rZW4AAAAAAAATAAAAAAAAAAZhbW91bnQAAAAAAAsAAAABAAAD6QAAAAIAAAAD",
         "AAAAAAAAAFVMUCB3aXRoZHJhd3MgZnJvbSB0aGUgc2hhcmVkIHBvb2wuIEJsb2NrZWQgaWYgTFAgc2hhcmVzIG9yIHBvb2wgYmFsYW5jZSBpbnN1ZmZpY2llbnQuAAAAAAAAC2xwX3dpdGhkcmF3AAAAAAMAAAAAAAAABHVzZXIAAAATAAAAAAAAAAV0b2tlbgAAAAAAABMAAAAAAAAABmFtb3VudAAAAAAACwAAAAEAAAPpAAAAAgAAAAM=",
         "AAAAAAAAAC5MUCBzaGFyZSBhbW91bnQgZm9yIGEgc3BlY2lmaWMgdXNlciBhbmQgdG9rZW4uAAAAAAAMZ2V0X2xwX3NoYXJlAAAAAgAAAAAAAAAEdXNlcgAAABMAAAAAAAAABXRva2VuAAAAAAAAEwAAAAEAAAAL",
         "AAAAAAAAAAAAAAAMZ2V0X3Bvc2l0aW9uAAAAAQAAAAAAAAAEdXNlcgAAABMAAAABAAAD6AAAB9AAAAAIUG9zaXRpb24=",
-        "AAAAAAAAAdlVc2VyLWNhbGxhYmxlLiBTZXR0bGVzIFBuTCBkaXJlY3RseSBhZ2FpbnN0IHRoZSBMUCBwb29sIGFuZCByZWxlYXNlcyBjb2xsYXRlcmFsLgpUaGUgY2FsbGVyIHByb3ZpZGVzIHRoZSBzaWduZWQgUG5MIChjb21wdXRlZCBvZmYtY2hhaW4gZnJvbSB0aGUgb3JhY2xlIGNsb3NlIHByaWNlKS4KCi0gcG5sID4gMDogcG9vbCBwYXlzIHRoZSB3aW5uZXIg4oCUIFBvb2xCYWxhbmNlIC09IHBubCwgVXNlck1hcmdpbiArPSBjb2xsYXRlcmFsICsgcG5sCi0gcG5sIDwgMDogcG9vbCBnYWlucyBmcm9tIHRoZSBsb3NlciDigJQgUG9vbEJhbGFuY2UgKz0gfHBubHwsIFVzZXJNYXJnaW4gKz0gY29sbGF0ZXJhbCAtIHxwbmx8Ci0gcG5sID0gMDogVXNlck1hcmdpbiArPSBjb2xsYXRlcmFsIChubyBwb29sIGltcGFjdCkKClJldHVybnMgYEluc3VmZmljaWVudFBvb2xgIGlmIHRoZSBwb29sIGNhbm5vdCBjb3ZlciBhIHdpbm5pbmcgcGF5b3V0LgAAAAAAAA5jbG9zZV9wb3NpdGlvbgAAAAAAAwAAAAAAAAAEdXNlcgAAABMAAAAAAAAAEGNvbGxhdGVyYWxfdG9rZW4AAAATAAAAAAAAAANwbmwAAAAACwAAAAEAAAPpAAAH0AAAAAhQb3NpdGlvbgAAAAM=",
+        "AAAAAAAAAlBDbG9zZXMgdGhlIGNhbGxlcidzIG9wZW4gcG9zaXRpb24gYW5kIHNldHRsZXMgUG5MIGFnYWluc3QgdGhlIExQIHBvb2wuCgpQbkwgaXMgY29tcHV0ZWQgb24tY2hhaW4gZnJvbSBzdG9yZWQgZW50cnkgZGF0YSBhbmQgdGhlIGNhbGxlci1wcm92aWRlZApjbG9zZSBwcmljZToKLSBsb25nOiAgcG5sID0gKGNsb3NlX3ByaWNlIC0gZW50cnlfcHJpY2UpICogeGxtX2Ftb3VudCAvIFNDQUxFCi0gc2hvcnQ6IHBubCA9IChlbnRyeV9wcmljZSAtIGNsb3NlX3ByaWNlKSAqIHhsbV9hbW91bnQgLyBTQ0FMRQoKLSBwbmwgPiAwOiBwb29sIHBheXMgdGhlIHdpbm5lciDigJQgUG9vbEJhbGFuY2UgLT0gcG5sLCBVc2VyTWFyZ2luICs9IGNvbGxhdGVyYWwgKyBwbmwKLSBwbmwgPCAwOiBwb29sIGdhaW5zIGZyb20gdGhlIGxvc2VyIOKAlCBQb29sQmFsYW5jZSArPSB8cG5sfCwgVXNlck1hcmdpbiArPSBjb2xsYXRlcmFsIC0gfHBubHwKLSBwbmwgPSAwOiBVc2VyTWFyZ2luICs9IGNvbGxhdGVyYWwgKG5vIHBvb2wgaW1wYWN0KQoKUmV0dXJucyBgSW5zdWZmaWNpZW50UG9vbGAgaWYgdGhlIHBvb2wgY2Fubm90IGNvdmVyIGEgd2lubmluZyBwYXlvdXQuAAAADmNsb3NlX3Bvc2l0aW9uAAAAAAADAAAAAAAAAAR1c2VyAAAAEwAAAAAAAAAQY29sbGF0ZXJhbF90b2tlbgAAABMAAAAAAAAAC2Nsb3NlX3ByaWNlAAAAAAsAAAABAAAD6QAAB9AAAAAIUG9zaXRpb24AAAAD",
         "AAAAAAAAACJUb3RhbCBMUCBwb29sIGJhbGFuY2UgZm9yIGEgdG9rZW4uAAAAAAAQZ2V0X3Bvb2xfYmFsYW5jZQAAAAEAAAAAAAAABXRva2VuAAAAAAAAEwAAAAEAAAAL",
         "AAAAAAAAAERVc2VyIGRlcG9zaXRzIG1hcmdpbiAoY29sbGF0ZXJhbCkgdG8gYmFjayB0aGVpciBsZXZlcmFnZWQgcG9zaXRpb25zLgAAABJkZXBvc2l0X2NvbGxhdGVyYWwAAAAAAAMAAAAAAAAABHVzZXIAAAATAAAAAAAAAAV0b2tlbgAAAAAAABMAAAAAAAAABmFtb3VudAAAAAAACwAAAAEAAAPpAAAAAgAAAAM=",
         "AAAAAAAAAD1Vc2VyIHdpdGhkcmF3cyBmcmVlIG1hcmdpbi4gQmxvY2tlZCB3aGlsZSBhIHBvc2l0aW9uIGlzIG9wZW4uAAAAAAAAE3dpdGhkcmF3X2NvbGxhdGVyYWwAAAAAAwAAAAAAAAAEdXNlcgAAABMAAAAAAAAABXRva2VuAAAAAAAAEwAAAAAAAAAGYW1vdW50AAAAAAALAAAAAQAAA+kAAAACAAAAAw==",
         "AAAAAAAAAD5BZG1pbi1vbmx5OiBhbGxvdyBhIHRva2VuIHRvIGJlIHVzZWQgYXMgY29sbGF0ZXJhbCAvIExQIHRva2VuLgAAAAAAFGFkZF9jb2xsYXRlcmFsX3Rva2VuAAAAAQAAAAAAAAAFdG9rZW4AAAAAAAATAAAAAQAAA+kAAAACAAAAAw==",
         "AAAAAAAAADZGcmVlIG1hcmdpbiBiYWxhbmNlIGZvciBhIHVzZXIgKGFsaWFzIGZvciBVc2VyTWFyZ2luKS4AAAAAABZnZXRfY29sbGF0ZXJhbF9iYWxhbmNlAAAAAAACAAAAAAAAAAR1c2VyAAAAEwAAAAAAAAAFdG9rZW4AAAAAAAATAAAAAQAAAAs=",
-        "AAAAAAAAAMxDYWxsZWQgYnkgdGhlIHVzZXIgZnJvbSB0aGUgZnJvbnRlbmQgYWZ0ZXIgY29tcHV0aW5nIGVjb25vbWljcyBvZmYtY2hhaW4uCkxvY2tzIGBjb2xsYXRlcmFsX2xvY2tlZGAgZnJvbSB0aGUgdXNlcidzIGZyZWUgbWFyZ2luIGFuZCByZWNvcmRzIHRoZQpQb3NpdGlvbiBvbi1jaGFpbiBmb3IgdHJhbnNwYXJlbmN5IGFuZCBsaXF1aWRhdGlvbiB0cmFja2luZy4AAAAXb3Blbl9zeW50aGV0aWNfcG9zaXRpb24AAAAABQAAAAAAAAAEdXNlcgAAABMAAAAAAAAADGFzc2V0X3N5bWJvbAAAABEAAAAAAAAAC2RlYnRfYW1vdW50AAAAAAsAAAAAAAAAEGNvbGxhdGVyYWxfdG9rZW4AAAATAAAAAAAAABFjb2xsYXRlcmFsX2xvY2tlZAAAAAAAAAsAAAABAAAD6QAAAAIAAAAD" ]),
+        "AAAAAAAAAM5PcGVucyBhIHN5bnRoZXRpYyBsZXZlcmFnZWQgcG9zaXRpb24uCgpDb21wdXRlcyBgZGVidF9hbW91bnQgPSB4bG1fYW1vdW50ICogZW50cnlfcHJpY2UgLyBTQ0FMRWAgb24tY2hhaW4gc28gdGhlCmNhbGxlciBjYW5ub3QgbWFuaXB1bGF0ZSB0aGUgbm90aW9uYWwuIExvY2tzIGBjb2xsYXRlcmFsX2xvY2tlZGAgZnJvbSB0aGUKdXNlcidzIGZyZWUgbWFyZ2luLgAAAAAAF29wZW5fc3ludGhldGljX3Bvc2l0aW9uAAAAAAcAAAAAAAAABHVzZXIAAAATAAAAAAAAAAxhc3NldF9zeW1ib2wAAAARAAAAAAAAAAp4bG1fYW1vdW50AAAAAAALAAAAAAAAAAtlbnRyeV9wcmljZQAAAAALAAAAAAAAAAdpc19sb25nAAAAAAEAAAAAAAAAEGNvbGxhdGVyYWxfdG9rZW4AAAATAAAAAAAAABFjb2xsYXRlcmFsX2xvY2tlZAAAAAAAAAsAAAABAAAD6QAAAAIAAAAD" ]),
       options
     )
   }

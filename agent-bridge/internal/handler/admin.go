@@ -110,7 +110,7 @@ func (h *AdminHandler) OpenPosition(w http.ResponseWriter, r *http.Request) {
 type closePositionRequest struct {
 	User            string  `json:"user"`            // G... address
 	CollateralToken string  `json:"collateralToken"` // C... address
-	Pnl             float64 `json:"pnl"`             // signed USDC (human units)
+	ClosePrice      float64 `json:"closePrice"`      // current mark price (human units)
 }
 
 func (h *AdminHandler) ClosePosition(w http.ResponseWriter, r *http.Request) {
@@ -129,8 +129,7 @@ func (h *AdminHandler) ClosePosition(w http.ResponseWriter, r *http.Request) {
 		return
 	}
 
-	pnlScaled := int64(req.Pnl * float64(soroban.ScaleFactor))
-	if err := h.Soroban.ClosePosition(r.Context(), req.User, req.CollateralToken, pnlScaled); err != nil {
+	if err := h.Soroban.ClosePosition(r.Context(), req.User, req.CollateralToken, req.ClosePrice); err != nil {
 		http.Error(w, err.Error(), http.StatusInternalServerError)
 		return
 	}

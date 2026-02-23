@@ -165,13 +165,12 @@ func main() {
 	// up from the store before calling SettleTrade.
 	if sorobanClient != nil {
 		tok := settlementToken
-		eng.SetSettleFunc(func(bCtx context.Context, userToken, _ string, pnl float64) error {
+		eng.SetSettleFunc(func(bCtx context.Context, userToken, _ string, closePrice float64) error {
 			conn := s.GetConnection(userToken)
 			if conn == nil || conn.AccountID == "" {
 				return fmt.Errorf("liquidation: no Stellar address for token %s", userToken)
 			}
-			pnlScaled := int64(pnl * float64(soroban.ScaleFactor))
-			return sorobanClient.ClosePosition(bCtx, conn.AccountID, tok, pnlScaled)
+			return sorobanClient.ClosePosition(bCtx, conn.AccountID, tok, closePrice)
 		})
 	}
 

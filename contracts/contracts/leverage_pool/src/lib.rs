@@ -1,6 +1,8 @@
 #![no_std]
 use soroban_sdk::{contract, contractimpl, contracttype, contracterror, token, Address, Env, Symbol};
 
+const SCALE: i128 = 10_000_000;
+
 // ── Errors ────────────────────────────────────────────────────────────────────
 
 #[contracterror]
@@ -27,9 +29,16 @@ pub struct Position {
     /// Human-readable symbol of the synthetic asset, e.g. `symbol_short!("XLM")`.
     pub asset_symbol: Symbol,
     /// Notional debt the user has taken on (scaled to 7 decimals).
+    /// Computed on-chain as xlm_amount * entry_price / SCALE.
     pub debt_amount: i128,
     /// Amount of collateral locked while this position is open.
     pub collateral_locked: i128,
+    /// Entry price of the synthetic asset (USDC per token, 7-decimal scaled).
+    pub entry_price: i128,
+    /// Size of the position in synthetic asset units (7-decimal scaled).
+    pub xlm_amount: i128,
+    /// true = long, false = short.
+    pub is_long: bool,
 }
 
 // ── Storage keys ─────────────────────────────────────────────────────────────
@@ -172,16 +181,20 @@ impl LeveragePool {
         Ok(())
     }
 
-    // ── Synthetic position lifecycle — Admin only ─────────────────────────────
+    // ── Synthetic position lifecycle ──────────────────────────────────────────
 
-    /// Called by the user from the frontend after computing economics off-chain.
-    /// Locks `collateral_locked` from the user's free margin and records the
-    /// Position on-chain for transparency and liquidation tracking.
+    /// Opens a synthetic leveraged position.
+    ///
+    /// Computes `debt_amount = xlm_amount * entry_price / SCALE` on-chain so the
+    /// caller cannot manipulate the notional. Locks `collateral_locked` from the
+    /// user's free margin.
     pub fn open_synthetic_position(
         e: Env,
         user: Address,
         asset_symbol: Symbol,
-        debt_amount: i128,
+        xlm_amount: i128,
+        entry_price: i128,
+        is_long: bool,
         collateral_token: Address,
         collateral_locked: i128,
     ) -> Result<(), Error> {
@@ -198,11 +211,16 @@ impl LeveragePool {
         }
         e.storage().persistent().set(&col_key, &(free - collateral_locked));
 
+        let debt_amount = xlm_amount * entry_price / SCALE;
+
         let pos = Position {
             user: user.clone(),
             asset_symbol,
             debt_amount,
             collateral_locked,
+            entry_price,
+            xlm_amount,
+            is_long,
         };
         let pos_key = DataKey::Position(user);
         e.storage().persistent().set(&pos_key, &pos);
@@ -210,8 +228,12 @@ impl LeveragePool {
         Ok(())
     }
 
-    /// User-callable. Settles PnL directly against the LP pool and releases collateral.
-    /// The caller provides the signed PnL (computed off-chain from the oracle close price).
+    /// Closes the caller's open position and settles PnL against the LP pool.
+    ///
+    /// PnL is computed on-chain from stored entry data and the caller-provided
+    /// close price:
+    ///   - long:  pnl = (close_price - entry_price) * xlm_amount / SCALE
+    ///   - short: pnl = (entry_price - close_price) * xlm_amount / SCALE
     ///
     /// - pnl > 0: pool pays the winner — PoolBalance -= pnl, UserMargin += collateral + pnl
     /// - pnl < 0: pool gains from the loser — PoolBalance += |pnl|, UserMargin += collateral - |pnl|
@@ -222,7 +244,7 @@ impl LeveragePool {
         e: Env,
         user: Address,
         collateral_token: Address,
-        pnl: i128,
+        close_price: i128,
     ) -> Result<Position, Error> {
         user.require_auth();
 
@@ -232,6 +254,13 @@ impl LeveragePool {
             .persistent()
             .get(&pos_key)
             .ok_or(Error::NoOpenPosition)?;
+
+        let price_diff = if pos.is_long {
+            close_price - pos.entry_price
+        } else {
+            pos.entry_price - close_price
+        };
+        let pnl = price_diff * pos.xlm_amount / SCALE;
 
         let pool_key = DataKey::PoolBalance(collateral_token.clone());
         let pool_bal: i128 = e.storage().persistent().get(&pool_key).unwrap_or(0);
@@ -322,6 +351,12 @@ mod tests {
         Env,
     };
 
+    // Shared constants for position tests:
+    //   500 XLM @ entry_price 0.1 USDC → debt = 50 USDC, collateral = 10 USDC (5×)
+    const XLM_AMT:    i128 = 500_0000000;   // 500 XLM (scaled)
+    const ENTRY:      i128 = 1_000_000;     // 0.1 USDC/XLM (scaled)
+    const COLLATERAL: i128 = 10_0000000;    // 10 USDC (scaled)
+
     fn setup(env: &Env) -> (LeveragePoolClient, Address, Address, Address) {
         let admin = Address::generate(env);
         let user  = Address::generate(env);
@@ -366,6 +401,18 @@ mod tests {
         assert_eq!(pool.get_lp_share(&user, &token), 20_0000000i128);
     }
 
+    fn open_std_position(pool: &LeveragePoolClient, user: &Address, token: &Address) {
+        pool.open_synthetic_position(
+            user,
+            &symbol_short!("XLM"),
+            &XLM_AMT,
+            &ENTRY,
+            &true,   // long
+            token,
+            &COLLATERAL,
+        );
+    }
+
     #[test]
     fn test_close_winning_position_pool_pays() {
         let env = Env::default();
@@ -379,22 +426,15 @@ mod tests {
 
         // User deposits 10 USDC margin
         pool.deposit_collateral(&user, &token, &10_0000000i128);
-
-        // Open 5× position: locks 10 USDC, debt = 50 USDC
-        pool.open_synthetic_position(
-            &user,
-            &symbol_short!("XLM"),
-            &50_0000000i128,
-            &token,
-            &10_0000000i128,
-        );
+        open_std_position(&pool, &user, &token);
         assert_eq!(pool.get_collateral_balance(&user, &token), 0);
 
-        // Close with +5 USDC profit → pool pays 5, user gets back 10 + 5
-        let pnl = 5_0000000i128;
-        pool.close_position(&user, &token, &pnl);
+        // close_price = 0.11 USDC → pnl = (1_100_000 - 1_000_000) * 500_0000000 / 10_000_000
+        //            = 100_000 * 50 = 5_000_000 = +5 USDC
+        let close_price = 1_100_000i128;
+        pool.close_position(&user, &token, &close_price);
 
-        assert_eq!(pool.get_pool_balance(&token), 45_0000000i128);   // 50 - 5
+        assert_eq!(pool.get_pool_balance(&token), 45_0000000i128);             // 50 - 5
         assert_eq!(pool.get_collateral_balance(&user, &token), 15_0000000i128); // 10 + 5
         assert!(pool.get_position(&user).is_none());
     }
@@ -405,24 +445,17 @@ mod tests {
         env.mock_all_auths();
         let (pool, _admin, user, token) = setup(&env);
 
-        // LP seeds the pool
         let lp = Address::generate(&env);
         StellarAssetClient::new(&env, &token).mint(&lp, &100_0000000i128);
         pool.lp_deposit(&lp, &token, &50_0000000i128);
 
-        // User deposits 10 USDC margin
         pool.deposit_collateral(&user, &token, &10_0000000i128);
-        pool.open_synthetic_position(
-            &user,
-            &symbol_short!("XLM"),
-            &50_0000000i128,
-            &token,
-            &10_0000000i128,
-        );
+        open_std_position(&pool, &user, &token);
 
-        // Close with -3 USDC loss → pool gains 3, user gets back 10 - 3
-        let pnl = -3_0000000i128;
-        pool.close_position(&user, &token, &pnl);
+        // close_price = 0.094 USDC → pnl = (940_000 - 1_000_000) * 500_0000000 / 10_000_000
+        //            = -60_000 * 50 = -3_000_000 = -3 USDC
+        let close_price = 940_000i128;
+        pool.close_position(&user, &token, &close_price);
 
         assert_eq!(pool.get_pool_balance(&token), 53_0000000i128);   // 50 + 3
         assert_eq!(pool.get_collateral_balance(&user, &token), 7_0000000i128); // 10 - 3
@@ -440,17 +473,12 @@ mod tests {
         pool.lp_deposit(&lp, &token, &50_0000000i128);
 
         pool.deposit_collateral(&user, &token, &10_0000000i128);
-        pool.open_synthetic_position(
-            &user,
-            &symbol_short!("XLM"),
-            &50_0000000i128,
-            &token,
-            &10_0000000i128,
-        );
+        open_std_position(&pool, &user, &token);
 
-        // Full liquidation — loss exceeds collateral
-        let pnl = -15_0000000i128;
-        pool.close_position(&user, &token, &pnl);
+        // close_price = 0.07 USDC → pnl = (700_000 - 1_000_000) * 500_0000000 / 10_000_000
+        //            = -300_000 * 50 = -15_000_000 = -15 USDC (> collateral, fully liquidated)
+        let close_price = 700_000i128;
+        pool.close_position(&user, &token, &close_price);
 
         assert_eq!(pool.get_pool_balance(&token), 60_0000000i128);   // 50 + 10 (capped)
         assert_eq!(pool.get_collateral_balance(&user, &token), 0);
@@ -468,11 +496,10 @@ mod tests {
         pool.lp_deposit(&lp, &token, &50_0000000i128);
 
         pool.deposit_collateral(&user, &token, &10_0000000i128);
-        pool.open_synthetic_position(
-            &user, &symbol_short!("XLM"), &50_0000000i128, &token, &10_0000000i128,
-        );
+        open_std_position(&pool, &user, &token);
 
-        pool.close_position(&user, &token, &0i128);
+        // close at entry price → pnl = 0
+        pool.close_position(&user, &token, &ENTRY);
 
         assert_eq!(pool.get_pool_balance(&token), 50_0000000i128); // unchanged
         assert_eq!(pool.get_collateral_balance(&user, &token), 10_0000000i128); // returned
@@ -490,11 +517,10 @@ mod tests {
         pool.lp_deposit(&lp, &token, &1_0000000i128);
 
         pool.deposit_collateral(&user, &token, &10_0000000i128);
-        pool.open_synthetic_position(
-            &user, &symbol_short!("XLM"), &50_0000000i128, &token, &10_0000000i128,
-        );
+        open_std_position(&pool, &user, &token);
 
-        let result = pool.try_close_position(&user, &token, &5_0000000i128);
+        // close_price = 1_100_000 → win +5 USDC, but pool only has 1 USDC
+        let result = pool.try_close_position(&user, &token, &1_100_000i128);
         assert!(result.is_err());
     }
 
@@ -505,12 +531,17 @@ mod tests {
         let (pool, _admin, user, token) = setup(&env);
 
         pool.deposit_collateral(&user, &token, &200_0000000i128);
+        // 1000 XLM @ 1.0 USDC → debt = 1000 USDC, collateral = 100 USDC (10×)
         pool.open_synthetic_position(
-            &user, &symbol_short!("XLM"), &1_000_0000000i128, &token, &100_0000000i128,
+            &user, &symbol_short!("XLM"),
+            &1_000_0000000i128, &10_000_000i128, &true,
+            &token, &100_0000000i128,
         );
 
         let result = pool.try_open_synthetic_position(
-            &user, &symbol_short!("XLM"), &500_0000000i128, &token, &50_0000000i128,
+            &user, &symbol_short!("XLM"),
+            &500_0000000i128, &10_000_000i128, &true,
+            &token, &50_0000000i128,
         );
         assert!(result.is_err());
     }
@@ -523,10 +554,42 @@ mod tests {
 
         pool.deposit_collateral(&user, &token, &100_0000000i128);
         pool.open_synthetic_position(
-            &user, &symbol_short!("XLM"), &1_000_0000000i128, &token, &100_0000000i128,
+            &user, &symbol_short!("XLM"),
+            &1_000_0000000i128, &10_000_000i128, &true,
+            &token, &100_0000000i128,
         );
 
         let result = pool.try_withdraw_collateral(&user, &token, &10_0000000i128);
         assert!(result.is_err());
+    }
+
+    #[test]
+    fn test_short_position_pnl() {
+        let env = Env::default();
+        env.mock_all_auths();
+        let (pool, _admin, user, token) = setup(&env);
+
+        let lp = Address::generate(&env);
+        StellarAssetClient::new(&env, &token).mint(&lp, &100_0000000i128);
+        pool.lp_deposit(&lp, &token, &50_0000000i128);
+
+        pool.deposit_collateral(&user, &token, &10_0000000i128);
+        // Short 500 XLM @ 0.1 USDC
+        pool.open_synthetic_position(
+            &user,
+            &symbol_short!("XLM"),
+            &XLM_AMT,
+            &ENTRY,
+            &false,  // short
+            &token,
+            &COLLATERAL,
+        );
+
+        // Price drops to 0.094 → short profit = (entry - close) * xlm / SCALE
+        //   = (1_000_000 - 940_000) * 500_0000000 / 10_000_000 = 60_000 * 50 = +3 USDC
+        pool.close_position(&user, &token, &940_000i128);
+
+        assert_eq!(pool.get_pool_balance(&token), 47_0000000i128);             // 50 - 3
+        assert_eq!(pool.get_collateral_balance(&user, &token), 13_0000000i128); // 10 + 3
     }
 }
