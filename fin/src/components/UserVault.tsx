@@ -123,12 +123,12 @@ export default function UserVault() {
   const refreshBalances = useCallback(async () => {
     if (!address) return;
     try {
-      const [vBal, cBal, pool] = await Promise.all([
-        contracts.getVaultBalance(address, contracts.USDC_CONTRACT),
+      const [lpShare, cBal, pool] = await Promise.all([
+        contracts.getLPShare(address, contracts.USDC_CONTRACT),
         contracts.getCollateralBalance(address, contracts.USDC_CONTRACT),
-        contracts.getTerminalPool(contracts.USDC_CONTRACT),
+        contracts.getPoolBalance(contracts.USDC_CONTRACT),
       ]);
-      setVBalance(vBal);
+      setVBalance(lpShare);
       setFreeMargin(cBal);
       setPoolBalance(pool);
     } catch { /* ignore */ }
@@ -157,7 +157,7 @@ export default function UserVault() {
     setVBusy(true); setVStatus(null);
     try {
       const amount = parseFloat(vAmount);
-      const fn = action === 'deposit' ? contracts.vaultDeposit : contracts.vaultWithdraw;
+      const fn = action === 'deposit' ? contracts.lpDeposit : contracts.lpWithdraw;
       await fn(address, contracts.USDC_CONTRACT, amount, signTransaction);
       setVStatus({ ok: true, msg: `${action === 'deposit' ? 'Deposited' : 'Withdrawn'} ${amount} USDC` });
       setVAmount('');

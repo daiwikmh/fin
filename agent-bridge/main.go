@@ -171,7 +171,7 @@ func main() {
 				return fmt.Errorf("liquidation: no Stellar address for token %s", userToken)
 			}
 			pnlScaled := int64(pnl * float64(soroban.ScaleFactor))
-			return sorobanClient.SettleTrade(bCtx, conn.AccountID, pnlScaled, tok)
+			return sorobanClient.ClosePosition(bCtx, conn.AccountID, tok, pnlScaled)
 		})
 	}
 

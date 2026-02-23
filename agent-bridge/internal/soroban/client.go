@@ -17,6 +17,7 @@ import (
 	"log"
 	"strconv"
 	"strings"
+	"sync"
 	"time"
 
 	"github.com/stellar/go-stellar-sdk/keypair"
@@ -31,6 +32,12 @@ import (
 const ScaleFactor int64 = 10_000_000
 
 // Client holds connection config and the admin signing keypair.
+//
+// mu serialises all contract invocations so that concurrent HTTP handlers
+// never race on the admin account's sequence number.  Without the lock two
+// simultaneous calls (e.g. stale-position probe + open) both call
+// getSequence(), get the same value S, build txs with S+1, and the second
+// submission is rejected with txBAD_AUTH.
 type Client struct {
 	RPCURL            string // e.g. "https://soroban-testnet.stellar.org"
 	HorizonURL        string // e.g. "https://horizon-testnet.stellar.org"
@@ -40,6 +47,7 @@ type Client struct {
 	PoolContractID    string // LeveragePool contract (C...)
 
 	rpc *rpcClient
+	mu  sync.Mutex // serialises admin-account invocations
 }
 
 // New creates a ready-to-use Client.
@@ -113,10 +121,11 @@ func (c *Client) OpenPosition(
 		xdr.ScVec{userArg, symArg, debtArg, collTokenArg, collLockedArg})
 }
 
-// ClosePosition calls LeveragePool.close_position.
-// Must be called AFTER SettleTrade has handled the money.
-func (c *Client) ClosePosition(ctx context.Context, user, collateralToken string) error {
-	log.Printf("[soroban] ClosePosition user=%s collateral=%s", user, collateralToken)
+// ClosePosition calls LeveragePool.close_position(user, collateral_token, pnl).
+// Settles PnL directly against the LP pool: positive pnl credits the user from the
+// pool; negative pnl credits the pool from the user's locked collateral.
+func (c *Client) ClosePosition(ctx context.Context, user, collateralToken string, pnlScaled int64) error {
+	log.Printf("[soroban] ClosePosition user=%s collateral=%s pnl=%d", user, collateralToken, pnlScaled)
 
 	userArg, err := accountScVal(user)
 	if err != nil {
@@ -126,16 +135,22 @@ func (c *Client) ClosePosition(ctx context.Context, user, collateralToken string
 	if err != nil {
 		return fmt.Errorf("soroban: bad collateral token: %w", err)
 	}
+	pnlArg := i128ScVal(pnlScaled)
 
 	return c.invoke(ctx, c.PoolContractID, "close_position",
-		xdr.ScVec{userArg, collTokenArg})
+		xdr.ScVec{userArg, collTokenArg, pnlArg})
 }
 
 // ── Core invoke loop ─────────────────────────────────────────────────────────
 
 // invoke builds, simulates, signs, and submits a contract call.
 // Retries up to 3 times on tx_bad_seq (nonce mismatch).
+// A mutex ensures only one invocation is in-flight at a time so concurrent
+// callers don't share the same sequence number.
 func (c *Client) invoke(ctx context.Context, contractID, function string, args xdr.ScVec) error {
+	c.mu.Lock()
+	defer c.mu.Unlock()
+
 	adminKP, err := keypair.ParseFull(c.AdminSecret)
 	if err != nil {
 		return fmt.Errorf("soroban: parse admin key: %w", err)

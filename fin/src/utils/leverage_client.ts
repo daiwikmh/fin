@@ -1,16 +1,21 @@
 /**
- * LeveragePool contract client.
- * Adapted from contracts/packages/leverage_sdk/src/index.ts.
- * Only change: @stellar/stellar-sdk → stellar-sdk.
+ * LeveragePool contract client — stellar-sdk v13 wrapper.
+ *
+ * Types mirror contracts/packages/leverage_sdk/src/index.ts (generated from
+ * the deployed contract).  ContractSpec XDR strings are copied verbatim from
+ * the generated file so they stay in sync with the on-chain contract.
+ *
+ * We cannot import leverage_sdk directly because it depends on
+ * @stellar/stellar-sdk@14 while fin/ uses stellar-sdk@13.
  */
 import { Buffer } from 'buffer';
 import {
-  AssembledTransaction,
   Client as ContractClient,
   ClientOptions as ContractClientOptions,
   MethodOptions,
   Result,
   Spec as ContractSpec,
+  AssembledTransaction,
 } from 'stellar-sdk/contract';
 import type { i128, Option } from 'stellar-sdk/contract';
 
@@ -19,7 +24,12 @@ if (typeof window !== 'undefined') {
   window.Buffer = window.Buffer || Buffer;
 }
 
-export const LEVERAGE_CONTRACT_ID = 'CCNF3JMO7MO5PSR7AS4GT3DKZU7MLDN5WS2ML7RWOGMGPLXTT7HXRY7L';
+// ── Contract address ──────────────────────────────────────────────────────────
+
+export const LEVERAGE_CONTRACT_ID =
+  'CCI7POVWZ6F6ZGWKI5CQHJ2DPIAJC3RVLQCDUJKINGUQL4NBVEUEB2BM';
+
+// ── Error table (mirrors generated Errors map) ────────────────────────────────
 
 export const Errors = {
   1: { message: 'NotInitialized' },
@@ -29,52 +39,114 @@ export const Errors = {
   5: { message: 'PositionAlreadyOpen' },
   6: { message: 'NoOpenPosition' },
   7: { message: 'UnsupportedCollateral' },
-};
+  8: { message: 'InsufficientPool' },
+} as const;
+
+// ── Types (mirrors generated Position interface) ──────────────────────────────
 
 export interface Position {
+  /** Human-readable symbol, e.g. "XLM". */
   asset_symbol: string;
+  /** Amount of collateral locked while position is open. */
   collateral_locked: i128;
+  /** Notional debt taken on (7-decimal-scaled). */
   debt_amount: i128;
+  /** The user who owns this position. */
   user: string;
 }
 
-export interface LeverageClient {
-  deposit_collateral(
-    args: { user: string; token: string; amount: i128 },
-    options?: MethodOptions,
-  ): Promise<AssembledTransaction<Result<void>>>;
-
-  withdraw_collateral(
-    args: { user: string; token: string; amount: i128 },
-    options?: MethodOptions,
-  ): Promise<AssembledTransaction<Result<void>>>;
-
-  get_collateral_balance(
-    args: { user: string; token: string },
-    options?: MethodOptions,
-  ): Promise<AssembledTransaction<i128>>;
-
-  get_position(
-    args: { user: string },
-    options?: MethodOptions,
-  ): Promise<AssembledTransaction<Option<Position>>>;
-}
+// ── Client (types mirror generated Client interface) ──────────────────────────
 
 export class LeverageClient extends ContractClient {
+  // Method signatures mirror contracts/packages/leverage_sdk/src/index.ts.
+  // These `declare` statements give TypeScript visibility into the methods
+  // that ContractSpec attaches at runtime.
+
+  declare initialize: (
+    args: { admin: string },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<Result<void>>>;
+
+  declare lp_deposit: (
+    args: { user: string; token: string; amount: i128 },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<Result<void>>>;
+
+  declare lp_withdraw: (
+    args: { user: string; token: string; amount: i128 },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<Result<void>>>;
+
+  declare get_lp_share: (
+    args: { user: string; token: string },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<i128>>;
+
+  declare get_position: (
+    args: { user: string },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<Option<Position>>>;
+
+  declare close_position: (
+    args: { user: string; collateral_token: string; pnl: i128 },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<Result<Position>>>;
+
+  declare get_pool_balance: (
+    args: { token: string },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<i128>>;
+
+  declare deposit_collateral: (
+    args: { user: string; token: string; amount: i128 },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<Result<void>>>;
+
+  declare withdraw_collateral: (
+    args: { user: string; token: string; amount: i128 },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<Result<void>>>;
+
+  declare add_collateral_token: (
+    args: { token: string },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<Result<void>>>;
+
+  declare get_collateral_balance: (
+    args: { user: string; token: string },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<i128>>;
+
+  declare open_synthetic_position: (
+    args: {
+      user: string;
+      asset_symbol: string;
+      debt_amount: i128;
+      collateral_token: string;
+      collateral_locked: i128;
+    },
+    options?: MethodOptions,
+  ) => Promise<AssembledTransaction<Result<void>>>;
+
+  // ── ContractSpec (XDR copied verbatim from generated leverage_sdk) ───────────
   constructor(public readonly options: ContractClientOptions) {
     super(
       new ContractSpec([
-        'AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAABwAAAAAAAAAOTm90SW5pdGlhbGl6ZWQAAAAAAAEAAAAAAAAAEkFscmVhZHlJbml0aWFsaXplZAAAAAAAAgAAAAAAAAAMVW5hdXRob3JpemVkAAAAAwAAAAAAAAAWSW5zdWZmaWNpZW50Q29sbGF0ZXJhbAAAAAAABAAAAAAAAAATUG9zaXRpb25BbHJlYWR5T3BlbgAAAAAFAAAAAAAAAA5Ob09wZW5Qb3NpdGlvbgAAAAAABgAAAAAAAAAVVW5zdXBwb3J0ZWRDb2xsYXRlcmFsAAAAAAAABw==',
-        'AAAAAgAAAAAAAAAAAAAAB0RhdGFLZXkAAAAABAAAAAAAAAAAAAAABUFkbWluAAAAAAAAAQAAAAAAAAATU3VwcG9ydGVkQ29sbGF0ZXJhbAAAAAABAAAAEwAAAAEAAAAAAAAAEUNvbGxhdGVyYWxCYWxhbmNlAAAAAAAAAgAAABMAAAATAAAAAQAAAAAAAAAIUG9zaXRpb24AAAABAAAAEw==',
-        'AAAAAQAAAAAAAAAAAAAACFBvc2l0aW9uAAAABAAAAEpIdW1hbi1yZWFkYWJsZSBzeW1ib2wgb2YgdGhlIHN5bnRoZXRpYyBhc3NldCwgZS5nLiBgc3ltYm9sX3Nob3J0ISgiWExNIilgLgAAAAAADGFzc2V0X3N5bWJvbAAAABEAAAA+QW1vdW50IG9mIGNvbGxhdGVyYWwgdG9rZW4gbG9ja2VkIHdoaWxlIHRoaXMgcG9zaXRpb24gaXMgb3Blbi4AAAAAABFjb2xsYXRlcmFsX2xvY2tlZAAAAAAAAAsAAACGTm90aW9uYWwgZGVidCB0aGUgdXNlciBoYXMgdGFrZW4gb24gKHNjYWxlZCB0byA3IGRlY2ltYWxzKS4KRm9yIGEgMTDDlyBsZXZlcmFnZWQgcG9zaXRpb24gd2l0aCAxMDAgVVNEQyBjb2xsYXRlcmFsIHRoaXMgd291bGQgYmUgMTAwMC4AAAAAAAtkZWJ0X2Ftb3VudAAAAAALAAAAIFRoZSB1c2VyIHdobyBvd25zIHRoaXMgcG9zaXRpb24uAAAABHVzZXIAAAAT',
+        'AAAABAAAAAAAAAAAAAAABUVycm9yAAAAAAAACAAAAAAAAAAOTm90SW5pdGlhbGl6ZWQAAAAAAAEAAAAAAAAAEkFscmVhZHlJbml0aWFsaXplZAAAAAAAAgAAAAAAAAAMVW5hdXRob3JpemVkAAAAAwAAAAAAAAAWSW5zdWZmaWNpZW50Q29sbGF0ZXJhbAAAAAAABAAAAAAAAAATUG9zaXRpb25BbHJlYWR5T3BlbgAAAAAFAAAAAAAAAA5Ob09wZW5Qb3NpdGlvbgAAAAAABgAAAAAAAAAVVW5zdXBwb3J0ZWRDb2xsYXRlcmFsAAAAAAAABwAAAAAAAAAQSW5zdWZmaWNpZW50UG9vbAAAAAg=',
+        'AAAAAgAAAAAAAAAAAAAAB0RhdGFLZXkAAAAABgAAAAAAAAAAAAAABUFkbWluAAAAAAAAAQAAAAAAAAATU3VwcG9ydGVkQ29sbGF0ZXJhbAAAAAABAAAAEwAAAAEAAAAAAAAAClVzZXJNYXJnaW4AAAAAAAIAAAATAAAAEwAAAAEAAAAAAAAAC1Bvb2xCYWxhbmNlAAAAAAEAAAATAAAAAQAAAAAAAAAITFBTaGFyZXMAAAACAAAAEwAAABMAAAABAAAAAAAAAAhQb3NpdGlvbgAAAAEAAAAT',
+        'AAAAAQAAAAAAAAAAAAAACFBvc2l0aW9uAAAABAAAAEpIdW1hbi1yZWFkYWJsZSBzeW1ib2wgb2YgdGhlIHN5bnRoZXRpYyBhc3NldCwgZS5nLiBgc3ltYm9sX3Nob3J0ISgiWExNIilgLgAAAAAADGFzc2V0X3N5bWJvbAAAABEAAAA4QW1vdW50IG9mIGNvbGxhdGVyYWwgbG9ja2VkIHdoaWxlIHRoaXMgcG9zaXRpb24gaXMgb3Blbi4AAAARY29sbGF0ZXJhbF9sb2NrZWQAAAAAAAALAAAAO05vdGlvbmFsIGRlYnQgdGhlIHVzZXIgaGFzIHRha2VuIG9uIChzY2FsZWQgdG8gNyBkZWNpbWFscykuAAAAAAtkZWJ0X2Ftb3VudAAAAAALAAAAIFRoZSB1c2VyIHdobyBvd25zIHRoaXMgcG9zaXRpb24uAAAABHVzZXIAAAAT',
         'AAAAAAAAAAAAAAAKaW5pdGlhbGl6ZQAAAAAAAQAAAAAAAAAFYWRtaW4AAAAAAAATAAAAAQAAA+kAAAACAAAAAw==',
+        'AAAAAAAAAEFMUCBkZXBvc2l0cyB0byB0aGUgc2hhcmVkIHBvb2wuIEluY3JlbWVudHMgTFBTaGFyZXModXNlciwgdG9rZW4pLgAAAAAAAApscF9kZXBvc2l0AAAAAAADAAAAAAAAAAR1c2VyAAAAEwAAAAAAAAAFdG9rZW4AAAAAAAATAAAAAAAAAAZhbW91bnQAAAAAAAsAAAABAAAD6QAAAAIAAAAD',
+        'AAAAAAAAAFVMUCB3aXRoZHJhd3MgZnJvbSB0aGUgc2hhcmVkIHBvb2wuIEJsb2NrZWQgaWYgTFAgc2hhcmVzIG9yIHBvb2wgYmFsYW5jZSBpbnN1ZmZpY2llbnQuAAAAAAAAC2xwX3dpdGhkcmF3AAAAAAMAAAAAAAAABHVzZXIAAAATAAAAAAAAAAV0b2tlbgAAAAAAABMAAAAAAAAABmFtb3VudAAAAAAACwAAAAEAAAPpAAAAAgAAAAM=',
+        'AAAAAAAAAC5MUCBzaGFyZSBhbW91bnQgZm9yIGEgc3BlY2lmaWMgdXNlciBhbmQgdG9rZW4uAAAAAAAMZ2V0X2xwX3NoYXJlAAAAAgAAAAAAAAAEdXNlcgAAABMAAAAAAAAABXRva2VuAAAAAAAAEwAAAAEAAAAL',
         'AAAAAAAAAAAAAAAMZ2V0X3Bvc2l0aW9uAAAAAQAAAAAAAAAEdXNlcgAAABMAAAABAAAD6AAAB9AAAAAIUG9zaXRpb24=',
-        'AAAAAAAAAJJBZG1pbi1vbmx5LiBSZWxlYXNlcyBsb2NrZWQgY29sbGF0ZXJhbCBiYWNrIHRvIGZyZWUgcG9vbCBhbmQgcmVtb3ZlcyB0aGUKcG9zaXRpb24gcmVjb3JkLiBDYWxsIHRoaXMgQUZURVIgQWdlbnRWYXVsdC5zZXR0bGVfcG5sIGhhcyBoYW5kbGVkIG1vbmV5LgAAAAAADmNsb3NlX3Bvc2l0aW9uAAAAAAACAAAAAAAAAAR1c2VyAAAAEwAAAAAAAAAQY29sbGF0ZXJhbF90b2tlbgAAABMAAAABAAAD6QAAB9AAAAAIUG9zaXRpb24AAAAD',
-        'AAAAAAAAAAAAAAASZGVwb3NpdF9jb2xsYXRlcmFsAAAAAAADAAAAAAAAAAR1c2VyAAAAEwAAAAAAAAAFdG9rZW4AAAAAAAATAAAAAAAAAAZhbW91bnQAAAAAAAsAAAABAAAD6QAAAAIAAAAD',
-        'AAAAAAAAAAAAAAATd2l0aGRyYXdfY29sbGF0ZXJhbAAAAAADAAAAAAAAAAR1c2VyAAAAEwAAAAAAAAAFdG9rZW4AAAAAAAATAAAAAAAAAAZhbW91bnQAAAAAAAsAAAABAAAD6QAAAAIAAAAD',
-        'AAAAAAAAADNBZG1pbi1vbmx5OiBhbGxvdyBhIHRva2VuIHRvIGJlIHVzZWQgYXMgY29sbGF0ZXJhbC4AAAAAFGFkZF9jb2xsYXRlcmFsX3Rva2VuAAAAAQAAAAAAAAAFdG9rZW4AAAAAAAATAAAAAQAAA+kAAAACAAAAAw==',
-        'AAAAAAAAAAAAAAAWZ2V0X2NvbGxhdGVyYWxfYmFsYW5jZQAAAAAAAgAAAAAAAAAEdXNlcgAAABMAAAAAAAAABXRva2VuAAAAAAAAEwAAAAEAAAAL',
-        'AAAAAAAAAM9DYWxsZWQgYnkgdGhlIEdvIG1hdGNoaW5nIGVuZ2luZSBhZnRlciBvZmYtY2hhaW4gb3JkZXIgbWF0Y2hpbmcuCkxvY2tzIGBjb2xsYXRlcmFsX2xvY2tlZGAgZnJvbSB0aGUgdXNlcidzIGZyZWUgY29sbGF0ZXJhbCBiYWxhbmNlIGFuZApyZWNvcmRzIHRoZSBQb3NpdGlvbiBvbi1jaGFpbiBmb3IgdHJhbnNwYXJlbmN5IGFuZCBsaXF1aWRhdGlvbiB0cmFja2luZy4AAAAAF29wZW5fc3ludGhldGljX3Bvc2l0aW9uAAAAAAUAAAAAAAAABHVzZXIAAAATAAAAAAAAAAxhc3NldF9zeW1ib2wAAAARAAAAAAAAAAtkZWJ0X2Ftb3VudAAAAAALAAAAAAAAABBjb2xsYXRlcmFsX3Rva2VuAAAAEwAAAAAAAAARY29sbGF0ZXJhbF9sb2NrZWQAAAAAAAALAAAAAQAAA+kAAAACAAAAAw==',
+        'AAAAAAAAAYFBZG1pbi1vbmx5LiBTZXR0bGVzIFBuTCBkaXJlY3RseSBhZ2FpbnN0IHRoZSBMUCBwb29sIGFuZCByZWxlYXNlcyBjb2xsYXRlcmFsLgoKLSBwbmwgPiAwOiBwb29sIHBheXMgdGhlIHdpbm5lciDigJQgUG9vbEJhbGFuY2UgLT0gcG5sLCBVc2VyTWFyZ2luICs9IGNvbGxhdGVyYWwgKyBwbmwKLSBwbmwgPCAwOiBwb29sIGdhaW5zIGZyb20gdGhlIGxvc2VyIOKAlCBQb29sQmFsYW5jZSArPSB8cG5sfCwgVXNlck1hcmdpbiArPSBjb2xsYXRlcmFsIC0gfHBubHwKLSBwbmwgPSAwOiBVc2VyTWFyZ2luICs9IGNvbGxhdGVyYWwgKG5vIHBvb2wgaW1wYWN0KQoKUmV0dXJucyBgSW5zdWZmaWNpZW50UG9vbGAgaWYgdGhlIHBvb2wgY2Fubm90IGNvdmVyIGEgd2lubmluZyBwYXlvdXQuAAAAAAAADmNsb3NlX3Bvc2l0aW9uAAAAAAADAAAAAAAAAAR1c2VyAAAAEwAAAAAAAAAQY29sbGF0ZXJhbF90b2tlbgAAABMAAAAAAAAAA3BubAAAAAALAAAAAQAAA+kAAAfQAAAACFBvc2l0aW9uAAAAAw==',
+        'AAAAAAAAACJUb3RhbCBMUCBwb29sIGJhbGFuY2UgZm9yIGEgdG9rZW4uAAAAAAAQZ2V0X3Bvb2xfYmFsYW5jZQAAAAEAAAAAAAAABXRva2VuAAAAAAAAEwAAAAEAAAAL',
+        'AAAAAAAAAERVc2VyIGRlcG9zaXRzIG1hcmdpbiAoY29sbGF0ZXJhbCkgdG8gYmFjayB0aGVpciBsZXZlcmFnZWQgcG9zaXRpb25zLgAAABJkZXBvc2l0X2NvbGxhdGVyYWwAAAAAAAMAAAAAAAAABHVzZXIAAAATAAAAAAAAAAV0b2tlbgAAAAAAABMAAAAAAAAABmFtb3VudAAAAAAACwAAAAEAAAPpAAAAAgAAAAM=',
+        'AAAAAAAAAD1Vc2VyIHdpdGhkcmF3cyBmcmVlIG1hcmdpbi4gQmxvY2tlZCB3aGlsZSBhIHBvc2l0aW9uIGlzIG9wZW4uAAAAAAAAE3dpdGhkcmF3X2NvbGxhdGVyYWwAAAAAAwAAAAAAAAAEdXNlcgAAABMAAAAAAAAABXRva2VuAAAAAAAAEwAAAAAAAAAGYW1vdW50AAAAAAALAAAAAQAAA+kAAAACAAAAAw==',
+        'AAAAAAAAAD5BZG1pbi1vbmx5OiBhbGxvdyBhIHRva2VuIHRvIGJlIHVzZWQgYXMgY29sbGF0ZXJhbCAvIExQIHRva2VuLgAAAAAAFGFkZF9jb2xsYXRlcmFsX3Rva2VuAAAAAQAAAAAAAAAFdG9rZW4AAAAAAAATAAAAAQAAA+kAAAACAAAAAw==',
+        'AAAAAAAAADZGcmVlIG1hcmdpbiBiYWxhbmNlIGZvciBhIHVzZXIgKGFsaWFzIGZvciBVc2VyTWFyZ2luKS4AAAAAABZnZXRfY29sbGF0ZXJhbF9iYWxhbmNlAAAAAAACAAAAAAAAAAR1c2VyAAAAEwAAAAAAAAAFdG9rZW4AAAAAAAATAAAAAQAAAAs=',
+        'AAAAAAAAAMNDYWxsZWQgYnkgdGhlIEdvIG1hdGNoaW5nIGVuZ2luZSBhZnRlciBvZmYtY2hhaW4gb3JkZXIgbWF0Y2hpbmcuCkxvY2tzIGBjb2xsYXRlcmFsX2xvY2tlZGAgZnJvbSB0aGUgdXNlcidzIGZyZWUgbWFyZ2luIGFuZCByZWNvcmRzIHRoZQpQb3NpdGlvbiBvbi1jaGFpbiBmb3IgdHJhbnNwYXJlbmN5IGFuZCBsaXF1aWRhdGlvbiB0cmFja2luZy4AAAAAF29wZW5fc3ludGhldGljX3Bvc2l0aW9uAAAAAAUAAAAAAAAABHVzZXIAAAATAAAAAAAAAAxhc3NldF9zeW1ib2wAAAARAAAAAAAAAAtkZWJ0X2Ftb3VudAAAAAALAAAAAAAAABBjb2xsYXRlcmFsX3Rva2VuAAAAEwAAAAAAAAARY29sbGF0ZXJhbF9sb2NrZWQAAAAAAAALAAAAAQAAA+kAAAACAAAAAw==',
       ]),
       options,
     );

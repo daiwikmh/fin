@@ -149,6 +149,22 @@ export async function withdrawCollateral(
   await signAndSubmit(tx.toXDR(), walletSign);
 }
 
+/** LP deposits `amount` USDC into the shared LeveragePool. */
+export async function lpDeposit(
+  user: string, token: string, amount: number, walletSign: WalletSignFn,
+): Promise<void> {
+  const tx = await leverageClient(user).lp_deposit({ user, token, amount: toI128(amount) });
+  await signAndSubmit(tx.toXDR(), walletSign);
+}
+
+/** LP withdraws `amount` USDC from the shared LeveragePool. */
+export async function lpWithdraw(
+  user: string, token: string, amount: number, walletSign: WalletSignFn,
+): Promise<void> {
+  const tx = await leverageClient(user).lp_withdraw({ user, token, amount: toI128(amount) });
+  await signAndSubmit(tx.toXDR(), walletSign);
+}
+
 // ── Read operations (simulation only, no signing needed) ──────────────────────
 
 // Dummy read-only publicKey — any valid G address works for simulation
@@ -174,6 +190,23 @@ export async function getVaultBalance(user: string, token: string): Promise<numb
 /** Read free collateral balance in human USDC units. */
 export async function getCollateralBalance(user: string, token: string): Promise<number> {
   const tx = await leverageClient(user).get_collateral_balance({ user, token });
+  return fromI128(tx.result as bigint);
+}
+
+/** Read total LP pool balance for a token in human USDC units. */
+export async function getPoolBalance(token: string): Promise<number> {
+  const tx = await new LeverageClient({
+    contractId:        LEVERAGE_CONTRACT_ID,
+    networkPassphrase: NETWORK_PASSPHRASE,
+    rpcUrl:            RPC_URL,
+    publicKey:         READ_ONLY_KEY,
+  }).get_pool_balance({ token });
+  return fromI128(tx.result as bigint);
+}
+
+/** Read LP share for a user in human USDC units. */
+export async function getLPShare(user: string, token: string): Promise<number> {
+  const tx = await leverageClient(user).get_lp_share({ user, token });
   return fromI128(tx.result as bigint);
 }
 
