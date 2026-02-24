@@ -24,15 +24,19 @@ AI agent     ──HTTP──► /api/bridge/*                LeveragePool
 
 ---
 
-## Smart Contracts (Testnet)
+## Smart Contracts
 
 All monetary values are `i128` with **7 decimal places** — `ScaleFactor = 10_000_000`.
+
+### Testnet
 
 | Contract | Address | Purpose |
 |---|---|---|
 | **AgentVault** | `CCNK5O3FFCOC5KEBRK6ORUUPPHYDUITTH2XCLLG7P2IBQRX2L6HXJFWG` | Holds USDC margin; settles PnL |
 | **LeveragePool v3** | `CCKZICAZIICUMVVSX2YHITOCV2E5LO4YQKCO5VYAS7G3PZYLN5N32UXL` | Synthetic positions, LP pool; on-chain PnL computation |
 | **USDC (SAC)** | `CBIELTK6YBZJU5UP2WWQEUCYKLPU6AUNZ2BQ4WWFEIE3USCIHMXQDAMA` | Testnet USDC Stellar Asset Contract |
+
+> Mainnet deployment is not yet live. All current activity runs on the Stellar testnet.
 
 TypeScript SDK bindings in `contracts/packages/vault_sdk` and `leverage_sdk` are used by the frontend for user-signed calls.
 
@@ -157,18 +161,18 @@ stoxy/
 │       ├── components/     UI components
 │       ├── configs/        Trading pairs config
 │       └── utils/          Wallet, bridge, TradingView helpers
-├── contracts/
-│   └── packages/
-│       ├── vault_sdk/      TypeScript bindings for AgentVault
-│       └── leverage_sdk/   TypeScript bindings for LeveragePool
-└── docs/                   GitBook documentation
+└── contracts/
+    └── packages/
+        ├── vault_sdk/      TypeScript bindings for AgentVault
+        └── leverage_sdk/   TypeScript bindings for LeveragePool
 ```
 
 ---
 
 ## API Overview
 
-Base URL: `http://localhost:8090`
+Base URL (local): `http://localhost:8090`
+Base URL (deployed): `https://fin-14qn.onrender.com`
 
 | Method | Path | Auth | Description |
 |---|---|---|---|
@@ -185,7 +189,7 @@ Base URL: `http://localhost:8090`
 | POST | `/api/admin/position` | Bearer | `LeveragePool.open_synthetic_position` |
 | POST | `/api/admin/position/close` | Bearer | `LeveragePool.close_position` |
 
-Full API docs: [`docs/api-reference/`](docs/api-reference/overview.md)
+Full API docs: see `agent-bridge/ARCHITECTURE.md`
 
 ---
 
@@ -202,7 +206,7 @@ Connect any LLM to Stoxy via a session token:
 
 **Trading endpoints:** place orders, open/close leveraged positions, submit signed XDRs — requires a Stellar keypair in 1Password.
 
-Docs: [`docs/ai-agent/`](docs/ai-agent/overview.md)
+Docs: `agent-bridge/ARCHITECTURE.md` — Agent section
 
 ---
 
@@ -218,27 +222,30 @@ Docs: [`docs/ai-agent/`](docs/ai-agent/overview.md)
 
 ## Documentation
 
-Full documentation is in [`docs/`](docs/README.md) and published via GitBook.
-
-| Section | Link |
+| Section | Location |
 |---|---|
-| Quick Start | [docs/getting-started/quick-start.md](docs/getting-started/quick-start.md) |
-| Trading | [docs/trading/](docs/trading/terminal.md) |
-| AI Agent | [docs/ai-agent/](docs/ai-agent/overview.md) |
-| API Reference | [docs/api-reference/](docs/api-reference/overview.md) |
-| Smart Contracts | [docs/smart-contracts/](docs/smart-contracts/overview.md) |
-| Self-Hosting | [docs/self-hosting/](docs/self-hosting/requirements.md) |
+| Bridge architecture & API | `agent-bridge/ARCHITECTURE.md` |
+| Smart contract source | `contracts/contracts/agent_vault/` · `contracts/contracts/leverage_pool/` |
+| TypeScript SDK bindings | `contracts/packages/vault_sdk/` · `contracts/packages/leverage_sdk/` |
 
 ---
 
 ## Deployment
 
-**Bridge (Leapcell):**
+### Live (Testnet)
+
+| Service | Platform | URL |
+|---|---|---|
+| **Agent Bridge** | Render | `https://fin-14qn.onrender.com` |
+| **Frontend** | Vercel | `https://stox-trading.vercel.app` |
+
+### Self-hosting
+
+**Bridge:**
 - Root: `.`
 - Build: `cd agent-bridge && go build -tags netgo -ldflags '-s -w' -o app .`
 - Start: `./agent-bridge/app`
 - Port: `8090`
+- Set `FRONTEND_URL` and `ALLOWED_ORIGIN` in `.env` for your domain.
 
 **Frontend:** Deploy `fin/` to Vercel with `NEXT_PUBLIC_AGENT_BRIDGE_URL` pointing to your bridge URL.
-
-Full guide: [docs/self-hosting/deployment.md](docs/self-hosting/deployment.md)

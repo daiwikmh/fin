@@ -52,12 +52,14 @@ export default function Header() {
             >
               Pro
             </button>
-            <button
-              className={`header-nav-item ${pathname === '/portfolio' ? 'active' : ''}`}
-              onClick={() => router.push('/portfolio')}
+            <a
+              className="header-nav-item"
+              href="https://daiwiks-organization.gitbook.io/stox-terminal"
+              target="_blank"
+              rel="noopener noreferrer"
             >
-              Portfolio
-            </button>
+              Gitbook
+            </a>
           </nav>
         </div>
 
