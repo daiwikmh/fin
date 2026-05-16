@@ -24,10 +24,6 @@ AI agent     ──HTTP──► /api/bridge/*                LeveragePool
 
 ---
 
-## Smart Contracts
-
-All monetary values are `i128` with **7 decimal places** — `ScaleFactor = 10_000_000`.
-
 ### Mainnet
 
 | Contract | Address | Purpose |
